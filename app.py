@@ -21,53 +21,51 @@ def check_password():
             st.error("비밀번호가 틀렸습니다.")
     return False
 
-# --- 2. 데이터 수집 및 종목명 매핑 (에러 방지 강화) ---
+# --- 2. 데이터 수집 및 종목명 매핑 (안전성 극대화) ---
 
-@st.cache_data(ttl=3600)
-def get_safe_ohlcv(ticker, start, end):
-    for _ in range(3):
-        try:
-            df = stock.get_market_ohlcv_by_date(start, end, ticker)
-            if df is not None and not df.empty:
-                return df
-            time.sleep(1) # 지연 시간 증가 (서버 과부하 방지)
-        except Exception:
-            continue
-    return pd.DataFrame()
-
-@st.cache_data(ttl=86400)
+@st.cache_data(ttl=86400) # 성공했을 때만 하루 동안 보관
 def get_all_ticker_map():
-    """전종목 딕셔너리를 생성하여 DataFrame 반환 에러 원천 차단"""
+    """전종목 리스트를 딕셔너리로 확보"""
     ticker_map = {}
     try:
-        # 시장별 티커 리스트 획득
+        # 코스피, 코스닥 리스트 통합 조회
         for mkt in ["KOSPI", "KOSDAQ"]:
             tickers = stock.get_market_ticker_list(market=mkt)
             for t in tickers:
-                # get_market_ticker_name은 문자열을 반환함
                 name = stock.get_market_ticker_name(t)
-                if isinstance(name, str):
+                if isinstance(name, str) and name.strip(): # 유효한 문자열일 때만 저장
                     ticker_map[t] = name
-    except Exception:
-        pass
+        
+        # 만약 조회가 실패하여 데이터가 너무 적으면 캐시하지 않음
+        if len(ticker_map) < 500: 
+            return {}
+    except Exception as e:
+        print(f"종목 리스트 수집 오류: {e}")
+        return {}
     return ticker_map
 
 def get_confirmed_stock_name(ticker):
-    """Pandas 객체가 반환될 경우를 대비한 안전 장치 추가"""
+    """종목명을 가져오는 메인 함수"""
+    # 1. 먼저 전체 맵에서 확인
     ticker_map = get_all_ticker_map()
+    
+    # 2. 맵이 비어있거나 해당 티커가 없으면 실시간 개별 조회 시도
     name = ticker_map.get(ticker)
     
-    if not name:
+    if not name or name == "미확인종목":
         try:
-            name = stock.get_market_ticker_name(ticker)
-            # 만약 name이 DataFrame으로 오면 첫 번째 값만 취하거나 빈 문자열 처리
-            if isinstance(name, pd.DataFrame) or isinstance(name, pd.Series):
-                name = name.iloc[0] if not name.empty else "미확인종목"
-        except Exception:
+            # 개별 종목명 조회 (재시도 로직 포함)
+            for _ in range(2):
+                name = stock.get_market_ticker_name(ticker)
+                if isinstance(name, str) and name.strip():
+                    break
+                time.sleep(0.5)
+        except:
             name = "미확인종목"
-            
-    # 최종적으로 name이 문자열인지 확인 (모호성 에러 방지)
-    return str(name) if name is not None else "미확인종목"
+
+    # 최종 결과가 여전히 비어있으면 티커를 그대로 반환하거나 '미확인' 처리
+    final_name = str(name) if name else "미확인종목"
+    return final_name
 
 # --- 3. 분석 메인 로직 ---
 def run_antigravity_analysis(ticker, base_date):
