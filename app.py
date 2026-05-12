@@ -12,7 +12,7 @@ def check_password():
     if st.session_state["password_correct"]:
         return True
 
-    password = st.text_input("Antigravity 시스템 비밀번호를 입력하세요", type="password")
+    password = st.text_input("시스템 비밀번호를 입력하세요", type="password")
     if st.button("로그인"):
         if password == st.secrets.get("password", "1234"): # secrets 미설정 시 대비
             st.session_state["password_correct"] = True
