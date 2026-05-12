@@ -10,7 +10,7 @@ def check_password():
         st.session_state["password_correct"] = False
     if st.session_state["password_correct"]:
         return True
-    password = st.text_input("💰 Shim's MSM v3.3 (Restored Table View)", type="password")
+    password = st.text_input("💰 Shim's MSM v3.3", type="password")
     if st.button("로그인"):
         if password == st.secrets.get("password", "1234"): 
             st.session_state["password_correct"] = True
