@@ -130,7 +130,7 @@ def scan_market(base_date):
     bar = st.progress(0)
     
     # 성능 최적화를 위해 거래대금 상위 종목 등으로 필터링 가능 (여기선 500개 샘플 예시)
-    scan_limit = 500 
+    scan_limit = len(tickers)
     for i, t in enumerate(tickers[:scan_limit]):
         if i % 50 == 0:
             msg.text(f"🔍 시장 스캔 중... ({i}/{scan_limit})")
