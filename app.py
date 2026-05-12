@@ -108,7 +108,7 @@ def run_antigravity_analysis(ticker, base_date):
 st.set_page_config(page_title="Antigravity Analyzer", layout="wide")
 
 if check_password():
-    st.title("💰 MSM v2.2 (Layout Optimized)")
+    st.title("💰 Shim's MSM v2.2")
     
     with st.sidebar:
         st.header("🔍 분석 설정")
