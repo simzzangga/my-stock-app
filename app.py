@@ -4,6 +4,34 @@ from datetime import datetime, timedelta
 from pykrx import stock
 import matplotlib.pyplot as plt
 
+# --- 비밀번호 확인 로직 시작 ---
+def check_password():
+    """비밀번호가 맞으면 True를 돌려주는 함수"""
+    if "password_correct" not in st.session_state:
+        # 처음 접속했을 때
+        st.text_input("🔑 관리자 비밀번호를 입력하세요", type="password", on_change=password_entered, key="password_input")
+        return False
+    elif not st.session_state["password_correct"]:
+        # 비밀번호가 틀렸을 때
+        st.text_input("🔑 비밀번호가 틀렸습니다. 다시 입력하세요", type="password", on_change=password_entered, key="password_input")
+        st.error("❌ 접근 권한이 없습니다.")
+        return False
+    else:
+        # 비밀번호가 맞았을 때
+        return True
+
+def password_entered():
+    """입력한 비밀번호가 Secrets에 저장된 것과 맞는지 확인"""
+    if st.session_state["password_input"] == st.secrets["password"]:
+        st.session_state["password_correct"] = True
+        del st.session_state["password_input"]  # 보안을 위해 입력한 비밀번호 삭제
+    else:
+        st.session_state["password_correct"] = False
+
+# 비밀번호 확인을 먼저 실행하고, 맞을 때만 아래 내용을 보여줌
+if not check_password():
+    st.stop()  # 비밀번호가 틀리면 여기서 코드를 멈춤!
+# --- 비밀번호 확인 로직 끝 ---
 # 1. 페이지 설정 (웹 브라우저 탭 이름과 아이콘)
 st.set_page_config(page_title="Make Some Money 분석기", page_icon="📈", layout="wide")
 
