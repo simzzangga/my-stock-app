@@ -22,28 +22,31 @@ def check_password():
     return False
 
 # --- 2. 안전한 데이터 수집 함수 ---
-@st.cache_data(ttl=3600)
-def get_safe_ohlcv(ticker, start, end):
-    for _ in range(3):
-        try:
-            df = stock.get_market_ohlcv_by_date(start, end, ticker)
-            if not df.empty:
-                return df
-            time.sleep(0.5)
-        except:
-            continue
-    return pd.DataFrame()
-
-@st.cache_data(ttl=86400)
-def get_safe_stock_name(ticker):
+def get_all_ticker_names():
+    """전체 시장의 티커와 종목명을 딕셔너리로 반환"""
     try:
-        # pykrx의 종목명 출력 신뢰도를 높이기 위해 전종목 리스트에서 검색 시도
-        name = stock.get_market_ticker_name(ticker)
-        if name and name.strip():
-            return name
+        # 코스피, 코스닥 종목 리스트 합치기
+        tickers = stock.get_market_ticker_list(market="ALL")
+        ticker_map = {ticker: stock.get_market_ticker_name(ticker) for ticker in tickers}
+        return ticker_map
     except:
-        pass
-    return "미확인종목"
+        return {}
+
+def get_safe_stock_name(ticker):
+    """캐싱된 딕셔너리에서 종목명을 찾고, 없으면 재시도"""
+    ticker_map = get_all_ticker_names()
+    
+    # 1차: 캐시된 맵에서 확인
+    name = ticker_map.get(ticker)
+    
+    # 2차: 맵에 없으면(신규상장 등) 직접 단일 조회 재시도
+    if not name or name == "미확인종목":
+        try:
+            name = stock.get_market_ticker_name(ticker)
+        except:
+            name = None
+            
+    return name if name else "종목코드오류"
 
 # --- 3. 분석 로직 ---
 def run_antigravity_analysis(ticker, base_date):
@@ -54,7 +57,10 @@ def run_antigravity_analysis(ticker, base_date):
     stock_name = get_safe_stock_name(ticker)
 
     if df.empty:
-        return None, "데이터를 불러올 수 없습니다. 코드를 확인하세요."
+        # 데이터는 없는데 종목명은 있는 경우를 위해 한번 더 확인
+        if stock_name == "종목코드오류":
+             return None, "존재하지 않는 종목코드이거나 상장 폐지된 종목입니다."
+        return None, f"[{stock_name}] 데이터를 불러올 수 없습니다. (거래정지 등)"
 
     # 1. 급등 패턴 찾기
     spikes = df[df['등락률'] >= 15]
