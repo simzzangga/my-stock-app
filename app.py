@@ -12,7 +12,7 @@ def check_password():
     if st.session_state["password_correct"]:
         return True
 
-    password = st.text_input("Antigravity 시스템 비밀번호를 입력하세요", type="password")
+    password = st.text_input("Shim's MSM v2.3 시스템 비밀번호를 입력하세요", type="password")
     if st.button("로그인"):
         # st.secrets에 password가 설정되어 있어야 합니다. 테스트용이라면 직접 문자열 비교 가능
         if password == st.secrets.get("password", "1234"): 
@@ -131,7 +131,7 @@ def run_antigravity_analysis(ticker, base_date):
 st.set_page_config(page_title="Antigravity Analyzer", layout="wide")
 
 if check_password():
-    st.title("💰 MSM v2.3 (System Stabilized)")
+    st.title("💰 Shim's MSM v2.3")
     
     with st.sidebar:
         st.header("🔍 분석 설정")
