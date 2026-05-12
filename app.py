@@ -10,7 +10,7 @@ def check_password():
         st.session_state["password_correct"] = False
     if st.session_state["password_correct"]:
         return True
-    password = st.text_input("💰 Shim's MSM v3.3 (Advanced Logic)", type="password")
+    password = st.text_input("💰 Shim's MSM v3.3 (Restored Table View)", type="password")
     if st.button("로그인"):
         if password == st.secrets.get("password", "1234"): 
             st.session_state["password_correct"] = True
@@ -38,7 +38,7 @@ def get_verified_ticker_list():
         return list(set(ksp + ksq))
     except: return []
 
-# --- 3. 핵심 분석 로직 (v4.0 고도화 로직 적용) ---
+# --- 3. 핵심 분석 로직 (v4.0 기반) ---
 def run_antigravity_analysis(ticker, base_date):
     if not ticker or len(ticker) != 6: return None, "종목코드 오류"
 
@@ -51,12 +51,11 @@ def run_antigravity_analysis(ticker, base_date):
 
     if df.empty or len(df) < 120: return None, "데이터 부족"
 
-    # 지표 계산
     df['ma5'] = df['종가'].rolling(5).mean()
     df['ma20'] = df['종가'].rolling(20).mean()
     df['vol20'] = df['거래량'].rolling(20).mean()
 
-    # [로직변경] 의미있는 기준봉 탐색 (15% 이상 & 거래량 3배 이상)
+    # 기준봉 탐색 (v4.0 강화 조건)
     spikes = df[(df['등락률'] >= 15) & (df['종가'] > df['시가']) & (df['거래량'] > df['vol20'] * 3)]
     if spikes.empty: return None, "기준봉 조건 미달"
 
@@ -74,21 +73,19 @@ def run_antigravity_analysis(ticker, base_date):
     current_price = df['종가'].iloc[-1]
     current_vol = df['거래량'].iloc[-1]
 
-    # [로직변경] 이미 시세 분출 완료 여부 체크
+    # 시세 분출 여부 및 수급 체크
     if after_spike['고가'].max() >= spike_close * 1.10: return None, "시세 분출 완료"
-
-    # [로직변경] 거래량 감소 체크 (세력 이탈 감지)
     recent_vol_avg = after_spike['거래량'].tail(5).mean()
     vol_ratio = recent_vol_avg / spike_vol if spike_vol != 0 else 999
     if current_vol > df['vol20'].iloc[-1] * 0.9: return None, "수급 조절 중"
 
-    # [로직변경] 3단계 매수 구간 (피보나치 조정대)
+    # 3단계 매수 구간 계산
     buy1, buy2, buy3 = spike_close - (spike_body * 0.382), \
                        spike_close - (spike_body * 0.5), \
                        spike_close - (spike_body * 0.618)
     stop_loss = spike_open * 0.98
 
-    # 이평선 정배열 지지 확인
+    # 이평선 지지 확인
     ma_ok = (df['ma5'].iloc[-1] > df['ma20'].iloc[-1]) and (current_price > df['ma20'].iloc[-1] * 0.95)
     if not ma_ok: return None, "이평선 조건 부적합"
 
@@ -99,11 +96,7 @@ def run_antigravity_analysis(ticker, base_date):
     elif current_price <= buy3 and current_price > stop_loss: status = "🔴 3차 매수"
     else: return None, "매수 구간 이탈"
 
-    # 목표가 및 신뢰도
     target_10 = max(int(spike_high * 0.98), int(current_price * 1.10))
-    reliability = 100
-    if vol_ratio > 0.30: reliability -= 15
-    if current_price < df['ma20'].iloc[-1]: reliability -= 15
     
     return {
         "full_name": f"{raw_name} ({ticker})",
@@ -112,9 +105,8 @@ def run_antigravity_analysis(ticker, base_date):
         "target_10": target_10,
         "buy1": int(buy1), "buy2": int(buy2), "buy3": int(buy3),
         "stop_loss": int(stop_loss),
-        "reliability": max(0, reliability),
-        "potential_yield": ((target_10 / current_price) - 1) * 100,
-        "vol_ratio": vol_ratio
+        "reliability": 100 - int(vol_ratio * 100), # 간략화된 신뢰도 계산
+        "potential_yield": ((target_10 / current_price) - 1) * 100
     }, status
 
 # --- 4. 시장 스캔 함수 ---
@@ -125,22 +117,22 @@ def scan_market_full(base_date):
     msg, bar = st.empty(), st.progress(0)
     for i, t in enumerate(tickers):
         if i % 100 == 0:
-            msg.info(f"📡 {base_date.strftime('%Y-%m-%d')} 전수 스캔: {i}/{len(tickers)}")
+            msg.info(f"📡 {base_date.strftime('%Y-%m-%d')} 전수 스캔 중...")
             bar.progress(i / len(tickers))
         res, status = run_antigravity_analysis(t, base_date)
         if res:
-            item = {"종목": res['full_name'], "현재가": f"{res['current_price']:,}원", "목표가": f"{res['target_10']:,}원", "기대수익": f"+{res['potential_yield']:.1f}%", "신뢰도": f"{res['reliability']}%"}
+            item = {"종목": res['full_name'], "현재가": f"{res['current_price']:,}원", "목표가": f"{res['target_10']:,}원", "수익률": f"+{res['potential_yield']:.1f}%"}
             if status == "🟡 1차 매수": b1_list.append(item)
             elif status == "🟠 2차 매수": b2_list.append(item)
             elif status == "🔴 3차 매수": b3_list.append(item)
     bar.empty(); msg.empty()
     return b1_list, b2_list, b3_list
 
-# --- 5. 웹 UI (v3.3 포맷 유지) ---
+# --- 5. 웹 UI (Restored View) ---
 st.set_page_config(page_title="Shim's MSM v3.3", layout="wide")
 
 if check_password():
-    st.title("💰 Shim's MSM v3.3 (Logic 4.0 Inside)")
+    st.title("💰 Shim's MSM v3.3")
     
     st.markdown("### 🔍 분석 제어 센터")
     c1, c2, c3 = st.columns([2, 2, 1.2])
@@ -152,34 +144,43 @@ if check_password():
             st.cache_data.clear()
             st.rerun()
 
-    # 개별 분석 결과
+    # [복구된 섹션] 개별 종목 분석 결과 표
     res, status = run_antigravity_analysis(input_ticker, analysis_date)
     if res:
-        st.markdown(f"#### 🎯 {res['full_name']} 분석 결과")
+        st.markdown(f"#### 🎯 {res['full_name']} 분석 결과 및 매매 전략")
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("판단", status)
-        m2.metric("10% 자동매도가", f"{res['target_10']:,}원")
-        m3.metric("기대수익", f"+{res['potential_yield']:.1f}%")
-        m4.metric("분석 신뢰도", f"{res['reliability']}%")
+        m2.metric("목표 매도가", f"{res['target_10']:,}원")
+        m3.metric("기대 수익", f"+{res['potential_yield']:.1f}%")
+        m4.metric("분석 상태", "정상")
         
-        st.table(pd.DataFrame({
+        # 이전 버전의 상세 결과 표 복구
+        df_result = pd.DataFrame({
             "항목": ["최근 급등일", "현재가", "1차 매수 타점", "2차 매수 타점", "3차 매수 타점", "손절가", "목표가"],
-            "내용": [res['spike_date'], f"{res['current_price']:,}원", f"{res['buy1']:,}원", f"{res['buy2']:,}원", f"{res['buy3']:,}원", f"{res['stop_loss']:,}원", f"{res['target_10']:,}원"]
-        }))
+            "내용": [
+                res['spike_date'], 
+                f"{res['current_price']:,}원", 
+                f"{res['buy1']:,}원", 
+                f"{res['buy2']:,}원", 
+                f"{res['buy3']:,}원", 
+                f"{res['stop_loss']:,}원", 
+                f"{res['target_10']:,}원"
+            ]
+        })
+        st.table(df_result)
     else:
-        st.info(f"💡 분석 안내: {status}")
+        st.info(f"💡 분석 결과: {status}")
 
     st.markdown("---")
 
     # 시장 스캐너
-    st.markdown("### 📡 시장 전수 스캐너 (10% 수익 타켓)")
+    st.markdown("### 📡 시장 전수 스캐너")
     sc1, sc2 = st.columns(2)
     with sc1: btn_back = st.button(f"📅 {analysis_date.strftime('%m/%d')} 기준 스캔", use_container_width=True)
     with sc2: btn_today = st.button("☀️ 오늘 기준 실시간 스캔", use_container_width=True)
 
     t_date = analysis_date if btn_back else (datetime.date.today() if btn_today else None)
     if t_date:
-        st.subheader(f"📊 {t_date.strftime('%Y-%m-%d')} 추천 리스트")
         b1, b2, b3 = scan_market_full(t_date)
         res_c1, res_c2, res_c3 = st.columns(3)
         with res_c1:
