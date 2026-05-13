@@ -4,7 +4,7 @@ import pandas as pd
 import datetime
 import json
 import os
-import time
+import plotly.graph_objects as go
 
 # --- 데이터 영구 저장 시스템 ---
 LOG_FILE = "trade_v5_log.json"
@@ -23,7 +23,7 @@ def save_data(file_path, data):
     with open(file_path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
 
-# [안전장치] KRX 종목 리스트 로드 (서버 장애 대응)
+# [안전장치] KRX 종목 리스트 로드
 @st.cache_data(ttl=86400)
 def get_krx_list():
     try:
@@ -41,11 +41,10 @@ krx_df = get_krx_list()
 st.set_page_config(page_title="Shim's 100M Project", layout="wide")
 
 # 세션 상태 초기화
-if "auto_code" not in st.session_state:
-    st.session_state.auto_code = ""
-
-# --- [1단계] 보안 설정: 4자리 즉시 반응 ---
+if "auto_code" not in st.session_state: st.session_state.auto_code = ""
 if "auth" not in st.session_state: st.session_state.auth = False
+
+# --- [1단계] 보안 설정: 4자리 즉시 반응 (모바일 최적화) ---
 if not st.session_state.auth:
     st.title("💰 Shim's 100M Project Portal")
     st.info("비밀번호 4자리를 입력하면 자동으로 입장합니다.")
@@ -57,7 +56,7 @@ if not st.session_state.auth:
         else: st.error("비밀번호가 올바르지 않습니다.")
     st.stop()
 
-# --- [2단계] 사이드바: 자산 관리 및 목표 게이지 ---
+# --- [2단계] 사이드바: 자산 관리 및 목표 달성 게이지 ---
 st.sidebar.title("🏁 1억 만들기 플랜")
 target_goal = 100000000
 current_balance = trade_data["balance"]
@@ -75,27 +74,20 @@ if st.sidebar.button("자산 업데이트"):
 
 st.sidebar.divider()
 st.sidebar.subheader("🔍 종목명/종목코드 검색")
-if krx_df.empty:
-    st.sidebar.warning("⚠️ KRX 서버 장애로 검색이 제한됩니다.")
-    selected_name = None
-else:
+if not krx_df.empty:
     stock_names = krx_df['Name'].tolist()
-    selected_name = st.sidebar.selectbox("검색", stock_names, index=None, placeholder="종목명 입력")
-
-if selected_name:
-    target_code = krx_df[krx_df['Name'] == selected_name]['Code'].values[0]
-    st.sidebar.success(f"✅ **{selected_name}** | `{target_code}`")
-    
-    # 기록 업데이트
-    log_entry = {"name": selected_name, "code": target_code}
-    search_history = [h for h in search_history if h['code'] != target_code]
-    search_history.insert(0, log_entry)
-    save_data(SEARCH_HISTORY_FILE, search_history[:20])
+    selected_name = st.sidebar.selectbox("검색할 종목 선택", stock_names, index=None, placeholder="종목명을 입력하세요")
+    if selected_name:
+        target_code = krx_df[krx_df['Name'] == selected_name]['Code'].values[0]
+        st.sidebar.success(f"✅ **{selected_name}** | `{target_code}`")
+        if not any(h['code'] == target_code for h in search_history):
+            search_history.insert(0, {"name": selected_name, "code": target_code})
+            save_data(SEARCH_HISTORY_FILE, search_history[:20])
 
 st.sidebar.divider()
-st.sidebar.caption("🕒 최근 기록 (클릭 시 분석창 입력)")
-for h in search_history[:20]:
-    if st.sidebar.button(f"{h['name']} ({h['code']})", key=f"side_{h['code']}", use_container_width=True):
+st.sidebar.caption("🕒 최근 검색 기록 (클릭 시 자동 입력)")
+for h in search_history[:15]:
+    if st.sidebar.button(f" {h['name']} ({h['code']})", key=f"side_{h['code']}", use_container_width=True):
         st.session_state.auto_code = h['code']
         st.rerun()
 
@@ -107,7 +99,7 @@ if is_golden_time:
     st.markdown("""
         <div style="background-color: #FFD700; padding: 15px; border-radius: 10px; text-align: center; border: 2px solid #DAA520;">
             <h3 style="color: black; margin: 0;">🔥 실전 매수 골든타임 (3:00 PM)</h3>
-            <p style="color: black; margin: 0; font-weight: bold;">캔들 완성 시점입니다. 최종 타점을 확정하세요!</p>
+            <p style="color: black; margin: 0; font-weight: bold;">캔들이 완성되는 시점입니다. 최종 타점을 확정하세요!</p>
         </div>
     """, unsafe_allow_html=True)
     st.write("")
@@ -116,7 +108,7 @@ if is_golden_time:
 def analyze_v5(ticker, base_date):
     try:
         df = fdr.DataReader(ticker, base_date - datetime.timedelta(days=100), base_date)
-        if df.empty or len(df) < 20: return None
+        if df.empty or len(df) < 20: return None, None
         df.columns = [c.upper() for c in df.columns]
         df = df.rename(columns={'OPEN':'시가','HIGH':'고가','LOW':'저가','CLOSE':'종가','VOLUME':'거래량'})
         
@@ -124,23 +116,22 @@ def analyze_v5(ticker, base_date):
         df['VOL_AVG'] = df['거래량'].rolling(20).mean()
         
         spikes = df[(df['종가'] > df['시가']) & (df['BODY_RATIO'] > 0.7) & (df['거래량'] > df['VOL_AVG'] * 5)]
-        if spikes.empty: return None
+        if spikes.empty: return None, df
         
         target = spikes.tail(1).iloc[0]
         curr = df.iloc[-1]
-        if df['저가'].tail(2).min() < target['저가'] * 0.98: return None
+        if df['저가'].tail(2).min() < target['저가'] * 0.98: return None, df
         
         vol_force = (1 - (curr['거래량'] / target['거래량'])) * 100
         
-        return {
+        res = {
             "code": ticker, "curr": int(curr['종가']), "t_low": int(target['저가']),
-            "stop": int(target['저가'] * 0.95), "t_date": spikes.tail(1).index[0].strftime("%Y-%m-%d"),
-            "dist": (curr['종가'] - target['저가']) / target['저가'],
-            "vol_red": curr['거래량'] / target['거래량'],
-            "vol_force": vol_force,
+            "stop": int(target['저가'] * 0.95), "t_date": spikes.tail(1).index[0],
+            "vol_red": curr['거래량'] / target['거래량'], "vol_force": vol_force,
             "is_buy_zone": target['저가'] <= curr['종가'] <= target['저가'] * 1.03
         }
-    except: return None
+        return res, df
+    except: return None, None
 
 # --- [5단계] 메인 화면: 실시간 모니터링 ---
 st.title("🖥️ MSM Pro: 실시간 대응 포털")
@@ -155,36 +146,41 @@ if mon_stocks:
                 amt2 = sc1.number_input("2차 매수액", value=int(current_balance*0.12), key=f"a2_{idx}")
                 memo2 = sc2.text_input("추가 메모", key=f"m2_{idx}")
                 if st.button("2차 매수 기록", key=f"b2_{idx}"):
-                    trade_data["balance"] -= amt2
-                    s['amt1'] += amt2
-                    s['memo'] += f" | 2차:{memo2}"
+                    trade_data["balance"] -= amt2; s['amt1'] += amt2; s['memo'] += f" | 2차:{memo2}"
                     save_data(LOG_FILE, trade_data); save_data(MONITOR_FILE, mon_stocks); st.rerun()
             if c4.button("🔴 매도", key=f"sell_{idx}", use_container_width=True):
                 mon_stocks.pop(idx); save_data(MONITOR_FILE, mon_stocks); st.rerun()
 else:
     st.caption("현재 모니터링 중인 종목이 없습니다.")
 
-# --- [6단계] 종목 정밀 분석 ---
+# --- [6단계] 종목 정밀 분석 및 차트 ---
 st.divider()
-st.subheader("🔍 종목 정밀 분석")
+st.subheader("🔍 종목 정밀 분석 및 차트")
 with st.container(border=True):
     col_s1, col_s2, col_s3 = st.columns([2, 2, 1])
     input_ticker = col_s1.text_input("종목코드 입력", value=st.session_state.auto_code, placeholder="예: 005930")
     analysis_date = col_s2.date_input("분석 기준일", datetime.date.today())
-    btn_analysis = col_s3.button("📊 분석 실행", use_container_width=True)
+    btn_analysis = col_s3.button("📊 분석 및 차트 로드", use_container_width=True, type="primary")
 
 if btn_analysis and input_ticker:
-    res = analyze_v5(input_ticker, analysis_date)
+    res, df = analyze_v5(input_ticker, analysis_date)
     if res:
         st.success(f"🎯 분석 결과: {'🚀 매수 적기' if res['is_buy_zone'] else '🟡 관망 요망'}")
-        st.write(f"**눌림목 신뢰도 (세력 잔존):** {res['vol_force']:.1f}%")
+        
+        # 차트 시각화
+        fig = go.Figure(data=[go.Candlestick(x=df.index, open=df['시가'], high=df['고가'], low=df['저가'], close=df['종가'], name='주가')])
+        fig.add_hline(y=res['t_low'], line_dash="dash", line_color="yellow", annotation_text="기준봉 저가")
+        fig.add_hline(y=res['stop'], line_color="red", annotation_text="손절선(-5%)")
+        fig.update_layout(height=450, xaxis_rangeslider_visible=False, template="plotly_dark", margin=dict(l=10, r=10, t=30, b=10))
+        st.plotly_chart(fig, use_container_width=True)
+
         m1, m2, m3 = st.columns(3)
         m1.metric("현재가", f"{res['curr']:,}원")
         m2.metric("기준봉 저가", f"{res['t_low']:,}원")
         m3.metric("전략 손절가", f"{res['stop']:,}원")
         
         with st.expander("세부 전략 리포트"):
-            st.write(f"- 기준봉 일자: {res['t_date']} | 거래량 감소율: {res['vol_red']:.1%}")
+            st.write(f"- 세력 잔존 신뢰도: {res['vol_force']:.1f}% | 거래량 감소율: {res['vol_red']:.1%}")
             memo_in = st.text_input("매매 특이사항 메모", key="single_memo")
             if now.hour >= 15:
                 if st.button("🔥 모니터링 등록"):
@@ -203,8 +199,11 @@ if st.button("🚀 전 종목 스캔 시작 (상위 500개)", use_container_widt
         if krx_df.empty: st.error("KRX 서버 장애로 스캔이 불가능합니다.")
         else:
             krx_codes = krx_df.head(500)['Code'].tolist()
-            all_res = [analyze_v5(c, datetime.date.today()) for c in krx_codes]
-            all_res = [r for r in all_res if r]
+            all_res = []
+            for c in krx_codes:
+                r, _ = analyze_v5(c, datetime.date.today())
+                if r: all_res.append(r)
+            
             g_a = sorted([r for r in all_res if 0 <= r['dist'] <= 0.03], key=lambda x: x['dist'])[:10]
             g_b = sorted([r for r in all_res if r['vol_red'] <= 0.20], key=lambda x: x['vol_red'])[:10]
             scan_results = {"A": g_a, "B": g_b, "time": now.strftime("%Y-%m-%d %H:%M:%S")}
@@ -220,7 +219,7 @@ if s_data:
             if not s_data[cat]: st.write("추천 종목 없음")
             for item in s_data[cat]:
                 with st.expander(f"{item['code']} ({item['curr']:,}원)"):
-                    st.write(f"손절: {item['stop']:,}원 | 1차(40%): {int(current_balance*0.08):,}원")
+                    st.write(f"손절: {item['stop']:,}원 | 1차: {int(current_balance*0.08):,}원")
                     if now.hour >= 15:
                         m_in = st.text_input("기록 메모", key=f"m_{item['code']}")
                         if st.button("🔥 매수 등록", key=f"b_{item['code']}"):
