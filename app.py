@@ -44,10 +44,10 @@ st.set_page_config(page_title="Shim's 100M Project", layout="wide")
 if "auto_code" not in st.session_state: st.session_state.auto_code = ""
 if "auth" not in st.session_state: st.session_state.auth = False
 
-# --- [1단계] 보안 설정: 4자리 즉시 반응 (모바일 최적화) ---
+# --- [1단계] 보안 설정 ---
 if not st.session_state.auth:
-    st.title("💰 Shim's MSM Portal v5.2")
-    st.info("1억 만들기 프로젝트_From 202605")
+    st.title("💰 Shim's 100M Project Portal")
+    st.info("비밀번호 4자리를 입력하면 자동으로 입장합니다.")
     pwd = st.text_input("Access Key (4 digits)", type="password", max_chars=4, key="entry_pwd")
     if len(pwd) == 4:
         if pwd == "1234":
@@ -123,12 +123,13 @@ def analyze_v5(ticker, base_date):
         if df['저가'].tail(2).min() < target['저가'] * 0.98: return None, df
         
         vol_force = (1 - (curr['거래량'] / target['거래량'])) * 100
+        dist = (curr['종가'] - target['저가']) / target['저가']
         
         res = {
             "code": ticker, "curr": int(curr['종가']), "t_low": int(target['저가']),
             "stop": int(target['저가'] * 0.95), "t_date": spikes.tail(1).index[0],
             "vol_red": curr['거래량'] / target['거래량'], "vol_force": vol_force,
-            "is_buy_zone": target['저가'] <= curr['종가'] <= target['저가'] * 1.03
+            "dist": dist, "is_buy_zone": target['저가'] <= curr['종가'] <= target['저가'] * 1.03
         }
         return res, df
     except: return None, None
@@ -160,7 +161,7 @@ with st.container(border=True):
     col_s1, col_s2, col_s3 = st.columns([2, 2, 1])
     input_ticker = col_s1.text_input("종목코드 입력", value=st.session_state.auto_code, placeholder="예: 005930")
     analysis_date = col_s2.date_input("분석 기준일", datetime.date.today())
-    btn_analysis = col_s3.button("📊 분석", use_container_width=True, type="primary")
+    btn_analysis = col_s3.button("📊 분석 및 차트 로드", use_container_width=True, type="primary")
 
 if btn_analysis and input_ticker:
     res, df = analyze_v5(input_ticker, analysis_date)
@@ -191,42 +192,38 @@ if btn_analysis and input_ticker:
             else: st.warning("매수 등록은 15:00 이후 가능합니다.")
     else: st.warning("기준에 적합한 패턴을 찾을 수 없습니다.")
 
-# --- [7단계] 시장 스캐너 ---
+# --- [7단계] 시장 스캐너 (진행 상황 바 포함) ---
 st.divider()
 st.subheader("📡 오후 3시 전략 스캐너")
 if st.button("🚀 전 종목 스캔 시작 (상위 500개)", use_container_width=True):
-    with st.spinner("시장 데이터 분석 중..."):
-        if krx_df.empty: st.error("KRX 서버 장애로 스캔이 불가능합니다.")
-        else:
+    if krx_df.empty: 
+        st.error("KRX 서버 장애로 스캔이 불가능합니다.")
+    else:
+        # 진행 상황 표시창 생성
         progress_bar = st.progress(0)
         status_text = st.empty()
+        
         krx_codes = krx_df.head(500)['Code'].tolist()
         total_count = len(krx_codes)
         all_res = []
         
         for i, c in enumerate(krx_codes):
-            # 진행률 업데이트 (0.0 ~ 1.0 사이)
+            # 진행률 업데이트
             progress = (i + 1) / total_count
             progress_bar.progress(progress)
             status_text.text(f"⏳ 전체 500개 종목 중 {i + 1}개 분석 중... ({int(progress * 100)}%)")
             
             r, _ = analyze_v5(c, datetime.date.today())
-            if r:
-                all_res.append(r)
+            if r: all_res.append(r)
         
-        # 스캔 완료 후 진행창 제거
+        # 완료 후 진행창 제거
         progress_bar.empty()
         status_text.empty()
-            krx_codes = krx_df.head(500)['Code'].tolist()
-            all_res = []
-            for c in krx_codes:
-                r, _ = analyze_v5(c, datetime.date.today())
-                if r: all_res.append(r)
-            
-            g_a = sorted([r for r in all_res if 0 <= r['dist'] <= 0.03], key=lambda x: x['dist'])[:10]
-            g_b = sorted([r for r in all_res if r['vol_red'] <= 0.20], key=lambda x: x['vol_red'])[:10]
-            scan_results = {"A": g_a, "B": g_b, "time": now.strftime("%Y-%m-%d %H:%M:%S")}
-            save_data(SCAN_FILE, scan_results); st.session_state.last_scan = scan_results
+        
+        g_a = sorted([r for r in all_res if 0 <= r['dist'] <= 0.03], key=lambda x: x['dist'])[:10]
+        g_b = sorted([r for r in all_res if r['vol_red'] <= 0.20], key=lambda x: x['vol_red'])[:10]
+        scan_results = {"A": g_a, "B": g_b, "time": now.strftime("%Y-%m-%d %H:%M:%S")}
+        save_data(SCAN_FILE, scan_results); st.session_state.last_scan = scan_results
 
 s_data = st.session_state.get("last_scan", load_data(SCAN_FILE, None))
 if s_data:
