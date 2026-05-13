@@ -122,14 +122,12 @@ if check_password():
     # [TOP] 개별 종목 분석 섹션
     st.markdown("### 🔍 종목 정밀 분석")
     with st.container(border=True):
-        # 버튼 높이 정렬을 위해 empty label 대신 마진 조절
         c1, c2, c3 = st.columns([2, 2, 1.2])
         with c1:
             input_ticker = st.text_input("종목코드", value="265560", placeholder="6자리 입력")
         with c2:
             analysis_date = st.date_input("분석 기준일", datetime.date.today())
         with c3:
-            # HTML 마진을 이용한 수직 정렬 최적화
             st.markdown('<p style="margin-bottom: 28px;"></p>', unsafe_allow_html=True)
             btn_run = st.button("📊 분석 실행", use_container_width=True, type="primary")
 
@@ -150,7 +148,7 @@ if check_password():
                 st.table(pd.DataFrame({"항목": ["기준봉일", "2차타점", "3차타점", "손절가"], "내용": [res['spike_date'], f"{res['b2']:,}원", f"{res['b3']:,}원", f"{res['stop']:,}원"]}))
         else: st.info(f"알림: {status}")
 
-    # [MID] 최근 조회 기록 섹션 (중간 위치)
+    # [MID] 최근 조회 기록 섹션
     st.markdown("---")
     st.subheader("🕒 최근 조회 기록")
     if "search_logs" in st.session_state and st.session_state["search_logs"]:
@@ -160,11 +158,17 @@ if check_password():
     else:
         st.caption("최근 조회한 종목이 없습니다.")
 
-    # [BOTTOM] 시장 스캐너 섹션 (하단 위치)
+    # [BOTTOM] 시장 스캐너 섹션
     st.markdown("---")
     st.subheader("📡 실시간 매수 타점 스캐너")
     st.caption("최근 20일 내 기준봉(급등) 발생 후 현재 눌림목 구간인 우량주 스캔 (상위 500종목)")
     
+    # 스캔 결과 유지를 위한 세션 상태 초기화
+    if "scan_results" not in st.session_state:
+        st.session_state["scan_results"] = None
+    if "scan_time" not in st.session_state:
+        st.session_state["scan_time"] = None
+
     if st.button("🚀 전체 시장 스캔 시작", use_container_width=True):
         found = []
         progress_text = st.empty()
@@ -188,8 +192,15 @@ if check_password():
         bar.empty()
         progress_text.empty()
         
-        if found:
-            st.success(f"🔥 매수 적기 종목 {len(found)}건 발견")
-            st.dataframe(pd.DataFrame(found), use_container_width=True)
+        # 결과 및 시간 저장
+        st.session_state["scan_results"] = found
+        st.session_state["scan_time"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # 저장된 스캔 결과 표시
+    if st.session_state["scan_results"] is not None:
+        st.markdown(f"⏱️ **최근 스캔 시점:** `{st.session_state['scan_time']}`")
+        if st.session_state["scan_results"]:
+            st.success(f"🔥 매수 적기 종목 {len(st.session_state['scan_results'])}건 발견")
+            st.dataframe(pd.DataFrame(st.session_state["scan_results"]), use_container_width=True)
         else:
-            st.warning("현재 매수 구간에 진입한 대상 종목이 없습니다.")
+            st.warning("최근 스캔 결과 매수 구간에 진입한 대상 종목이 없습니다.")
