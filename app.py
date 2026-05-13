@@ -160,7 +160,7 @@ with st.container(border=True):
     col_s1, col_s2, col_s3 = st.columns([2, 2, 1])
     input_ticker = col_s1.text_input("종목코드 입력", value=st.session_state.auto_code, placeholder="예: 005930")
     analysis_date = col_s2.date_input("분석 기준일", datetime.date.today())
-    btn_analysis = col_s3.button("📊 분석 및 차트 로드", use_container_width=True, type="primary")
+    btn_analysis = col_s3.button("📊 분석", use_container_width=True, type="primary")
 
 if btn_analysis and input_ticker:
     res, df = analyze_v5(input_ticker, analysis_date)
