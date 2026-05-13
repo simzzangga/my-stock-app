@@ -74,7 +74,13 @@ if st.sidebar.button("자산 업데이트"):
 
 st.sidebar.divider()
 st.sidebar.subheader("🔍 종목명/종목코드 검색")
-if not krx_df.empty:
+
+if krx_df.empty:
+    # KRX 서버 응답이 없을 때 표시
+    st.sidebar.warning("⚠️ KRX 서버 연결 실패 (종목명 검색 불가)")
+    st.sidebar.info("하단의 '최근 기록'을 이용하거나 메인창에 코드를 직접 입력하세요.")
+else:
+    # 정상 작동 시 기존 검색창 표시
     stock_names = krx_df['Name'].tolist()
     selected_name = st.sidebar.selectbox("검색할 종목 선택", stock_names, index=None, placeholder="종목명을 입력하세요")
     if selected_name:
