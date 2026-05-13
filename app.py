@@ -174,7 +174,7 @@ with st.container(border=True):
                     save_data(LOG_FILE, trade_data); save_data(MONITOR_FILE, mon_stocks); st.rerun()
 
 st.divider()
-st.subheader("🕒 최근 정밀 분석 로그")
+st.subheader("🕒 최근 정밀 분석")
 if analysis_log:
     cols = st.columns(5)
     for i, log in enumerate(analysis_log[:20]):
