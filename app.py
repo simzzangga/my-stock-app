@@ -65,7 +65,7 @@ st.sidebar.progress(min(current_balance / 100000000, 1.0))
 
 with st.sidebar.expander("⚙️ 자산 수동 수정"):
     new_bal = st.number_input("금액 입력", value=current_balance, step=10000)
-    if st.button("자산 강제 업데이트"):
+    if st.sidebar.button("자산 강제 업데이트"):
         trade_data["balance"] = new_bal
         save_data(LOG_FILE, trade_data); st.rerun()
 
@@ -102,14 +102,27 @@ def analyze_v5(ticker, base_date):
         return {"code": ticker, "curr": int(curr['종가']), "t_low": int(target['저가']), "stop": int(target['저가'] * 0.95), "is_buy": target['저가'] <= curr['종가'] <= target['저가'] * 1.05}, df
     except: return None, None
 
+# [개선] 백그라운드 스캐너 안정화 버전
 def background_scanner(codes):
     results = []
     total = len(codes)
     for i, c in enumerate(codes):
-        st.session_state.scan_progress = int(((i + 1) / total) * 100)
-        st.session_state.scan_status = f"분석 중: {i+1}/{total}"
-        r, _ = analyze_v5(c, datetime.date.today())
-        if r: results.append(r)
+        try:
+            st.session_state.scan_progress = int(((i + 1) / total) * 100)
+            st.session_state.scan_status = f"분석 중: {i+1}/{total}"
+            
+            r, _ = analyze_v5(c, datetime.date.today())
+            if r: results.append(r)
+            
+            # 서버 부하 방지용 지연
+            time.sleep(0.2) 
+            
+            # 중간 저장 (중단 대비)
+            if (i + 1) % 10 == 0:
+                st.session_state.scan_results = results
+        except:
+            continue
+            
     st.session_state.scan_results = results
     st.session_state.scan_status = "완료"
     save_data(SCAN_FILE, {"results": results, "time": datetime.datetime.now().strftime("%H:%M")})
@@ -121,7 +134,6 @@ if mon_stocks:
     for idx, s in enumerate(mon_stocks):
         with st.container(border=True):
             c1, c2, c3, c4 = st.columns([1.5, 2, 3, 1])
-            # 수익률 실시간 계산
             try:
                 curr_df = fdr.DataReader(s['code'], datetime.date.today() - datetime.timedelta(days=7))
                 live_p = int(curr_df.iloc[-1]['Close'])
@@ -165,16 +177,17 @@ with st.container(border=True):
             st.success(f"🎯 {disp_name} 분석 완료")
             fig = go.Figure(data=[go.Candlestick(x=df.index, open=df['시가'], high=df['고가'], low=df['저가'], close=df['종가'], increasing_line_color='red', decreasing_line_color='blue')])
             fig.add_hline(y=res['t_low'], line_dash="dash", line_color="green", annotation_text="기준봉 저가")
+            fig.update_layout(height=450, xaxis_rangeslider_visible=False, template="plotly_dark")
             st.plotly_chart(fig, use_container_width=True)
             with st.expander("📝 매수 전략 등록"):
-                buy_amt = st.number_input("매수 금액(원)", value=int(current_balance*0.08))
+                buy_amt = st.number_input("매수 금액(원)", value=int(trade_data['balance']*0.08))
                 if st.button("🔥 실전 매수 등록"):
                     trade_data["balance"] -= buy_amt
                     mon_stocks.append({"name": disp_name, "code": input_ticker, "buy_price": res['curr'], "stop": res['stop'], "amt1": buy_amt, "memo": ""})
                     save_data(LOG_FILE, trade_data); save_data(MONITOR_FILE, mon_stocks); st.rerun()
 
 st.divider()
-st.subheader("🕒 최근 정밀 분석")
+st.subheader("🕒 최근 정밀 분석 로그")
 if analysis_log:
     cols = st.columns(5)
     for i, log in enumerate(analysis_log[:20]):
@@ -194,9 +207,9 @@ if c_scan1.button("🚀 스캔 시작", use_container_width=True):
 with c_scan2:
     if st.session_state.scan_status == "분석 중":
         st.progress(st.session_state.scan_progress / 100)
-        st.caption(f"⏳ {st.session_state.scan_status}...")
+        st.caption(f"⏳ {st.session_state.scan_status}... (다른 조작 가능)")
     elif st.session_state.scan_status == "완료":
-        st.success(f"✅ 스캔 완료! ({len(st.session_state.scan_results)}개 발견)")
+        st.success(f"✅ 스캔 완료! ({len(st.session_state.scan_results)}개 후보 발견)")
 
 if st.session_state.scan_results:
     with st.expander("📂 스캔 결과 리스트", expanded=True):
