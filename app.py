@@ -175,9 +175,9 @@ if btn_analysis and input_ticker:
         st.success(f"🎯 분석 결과: {'🚀 매수 적기' if res['is_buy_zone'] else '🟡 관망 요망'}")
         
         # 차트 시각화
-        fig = go.Figure(data=[go.Candlestick(x=df.index, open=df['시가'], high=df['고가'], low=df['저가'], close=df['종가'], name='주가')])
-        fig.add_hline(y=res['t_low'], line_dash="dash", line_color="yellow", annotation_text="기준봉 저가")
-        fig.add_hline(y=res['stop'], line_color="red", annotation_text="손절선(-5%)")
+        fig = go.Figure(data=[go.Candlestick(x=df.index, open=df['시가'], high=df['고가'], low=df['저가'], close=df['종가'], name='주가', increasing_line_color='red', decreasing_line_color='blue')])
+        fig.add_hline(y=res['t_low'], line_dash="dash", line_color="green", annotation_text="기준봉 저가")
+        fig.add_hline(y=res['stop'], line_color="magenta", annotation_text="손절선(-5%)")
         fig.update_layout(height=450, xaxis_rangeslider_visible=False, template="plotly_dark", margin=dict(l=10, r=10, t=30, b=10))
         st.plotly_chart(fig, use_container_width=True)
 
