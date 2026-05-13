@@ -1,5 +1,5 @@
 import streamlit as st
-from pykrx import stock
+import FinanceDataReader as fdr
 import pandas as pd
 import datetime
 import time
@@ -10,7 +10,7 @@ def check_password():
         st.session_state["password_correct"] = False
     if st.session_state["password_correct"]: return True
 
-    st.title("💰 Shim's MSM Portal")
+    st.title("💰 Shim's MSM Portal (FDR Edition)")
     password = st.text_input("비밀번호를 입력하세요", type="password")
     if st.button("접속", use_container_width=True):
         if password == st.secrets.get("password", "1234"): 
@@ -19,44 +19,47 @@ def check_password():
         else: st.error("비밀번호가 틀렸습니다.")
     return False
 
-# --- 2. 초고속 & 안정성 강화 데이터 엔진 ---
+# --- 2. 안정성 강화 데이터 엔진 (FDR 기반) ---
 @st.cache_data(ttl=86400)
-def get_ticker_names():
-    """모든 종목명 캐싱 (에러 발생 시 최근 영업일 역추적)"""
-    for i in range(8):
-        target_date = (datetime.date.today() - datetime.timedelta(days=i)).strftime("%Y%m%d")
-        try:
-            tickers = stock.get_market_ticker_list(target_date, market="ALL")
-            if tickers:
-                # 종목명 매핑 사전 생성
-                return {t: stock.get_market_ticker_name(t) for t in tickers}
-        except:
-            continue
-    return {"005930": "삼성전자"}
+def get_ticker_dict():
+    """KRX 전체 종목 리스트 및 종목명 캐싱"""
+    try:
+        # FDR을 사용하여 국내 상장사 목록 일괄 수집
+        df_krx = fdr.StockListing('KRX')
+        return dict(zip(df_krx['Code'], df_krx['Name']))
+    except:
+        return {"005930": "삼성전자"}
 
 @st.cache_data(ttl=600)
 def get_robust_ohlcv(ticker, start, end):
-    """안정적인 OHLCV 데이터 수집 (반복 재시도)"""
+    """FDR 기반 데이터 수집 (네이버 금융 소스 활용으로 안정성 높음)"""
     for _ in range(3):
         try:
-            df = stock.get_market_ohlcv_by_date(start, end, ticker)
-            if df is not None and not df.empty: return df
+            df = fdr.DataReader(ticker, start, end)
+            if df is not None and not df.empty:
+                # pykrx 로직 호환을 위한 컬럼명 변경
+                df = df.rename(columns={
+                    'Open': '시가', 'High': '고가', 'Low': '저가', 
+                    'Close': '종가', 'Volume': '거래량', 'Change': '등락률'
+                })
+                # FDR의 등락률은 소수점(0.15)이므로 % 단위(15.0)로 변환
+                df['등락률'] = df['등락률'] * 100
+                return df
             time.sleep(0.1)
         except: continue
     return pd.DataFrame()
 
 def add_to_recent_logs(ticker, name):
-    """최근 조회 기록 유지"""
     if "recent_logs" not in st.session_state: st.session_state["recent_logs"] = []
     log_entry = f"{name} ({ticker})"
     if log_entry in st.session_state["recent_logs"]: st.session_state["recent_logs"].remove(log_entry)
     st.session_state["recent_logs"].insert(0, log_entry)
     st.session_state["recent_logs"] = st.session_state["recent_logs"][:10]
 
-# --- 3. 분석 엔진 (v3.3 & v4.0 통합) ---
+# --- 3. 분석 엔진 (v3.3 & v4.0) ---
 def run_analysis(ticker, base_date, mode):
-    start_date = (base_date - datetime.timedelta(days=365)).strftime("%Y%m%d")
-    end_date = base_date.strftime("%Y%m%d")
+    start_date = (base_date - datetime.timedelta(days=365)).strftime("%Y-%m-%d")
+    end_date = base_date.strftime("%Y-%m-%d")
     df = get_robust_ohlcv(ticker, start_date, end_date)
     if df.empty: return None, "데이터 없음"
 
@@ -98,7 +101,7 @@ def run_analysis(ticker, base_date, mode):
 st.set_page_config(page_title="Shim's MSM Dual Pro", layout="wide")
 
 if check_password():
-    ticker_dict = get_ticker_names()
+    ticker_dict = get_ticker_dict()
     
     st.sidebar.title("⚙️ 시스템 설정")
     app_mode = st.sidebar.radio("분석 엔진 선택", ["v3.3 (수급 중심)", "v4.0 (타점 중심)"])
@@ -106,10 +109,10 @@ if check_password():
     st.title(f"📊 Shim's MSM Dual Pro - {app_mode}")
 
     # [A] 종목 정밀 분석
-    st.markdown("### 🔍 개별 종목 정밀 분석")
+    st.markdown("### 🔍 개별 종목 분석")
     with st.container(border=True):
         c1, c2, c3 = st.columns([2, 2, 1.2])
-        input_ticker = c1.text_input("종목코드 6자리", value="265560")
+        input_ticker = c1.text_input("종목코드", value="265560")
         analysis_date = c2.date_input("기준 날짜", datetime.date.today())
         btn_run = c3.button("📊 분석 실행", use_container_width=True, type="primary")
 
@@ -121,7 +124,7 @@ if check_password():
             st.success(f"🎯 {name} ({input_ticker}) - {status}")
             m1, m2, m3, m4 = st.columns(4)
             m1.metric("현재가", f"{res['current_price']:,}원")
-            m2.metric("전망 목표가", f"{res['target']:,}원")
+            m2.metric("목표가", f"{res['target']:,}원")
             if "v3.3" in app_mode:
                 m3.metric("거래비율", f"{res['vol_ratio']:.1%}")
                 st.table(pd.DataFrame({"항목": ["기준일", "매수구간", "손절가"], "내용": [res['spike_date'], res['buy_zone'], f"{res['stop']:,}원"]}))
@@ -132,36 +135,33 @@ if check_password():
 
     st.markdown("---")
 
-    # [B] 초고속 시장 스캐너 (필터링 기반)
-    st.markdown("### 📡 초고속 시장 스캐너")
-    if st.button(f"🚀 {analysis_date.strftime('%m/%d')} 시장 전수 스캔 시작", use_container_width=True):
-        with st.status("시장 분석 중...", expanded=True) as status_box:
-            st.write("1단계: 전체 종목 등락률 수집...")
-            target_date_str = analysis_date.strftime("%Y%m%d")
-            df_market = stock.get_market_ohlcv_by_date(target_date_str, target_date_str, "ALL")
+    # [B] 고속 시장 스캐너
+    st.markdown("### 📡 시장 스캐너 (FDR 기반)")
+    if st.button("🚀 전 종목 스캔 시작", use_container_width=True):
+        with st.status("분석 중...", expanded=True) as status_box:
+            # 전체 종목 등락률 조회
+            st.write("1단계: 전체 시장 데이터 로드...")
+            target_date_str = analysis_date.strftime("%Y-%m-%d")
+            # fdr.StockListing을 활용해 등락률 필터링 우회 가능하나,
+            # 정확도를 위해 등락률이 높은 후보군을 먼저 선별
+            df_list = fdr.StockListing('KRX')
+            candidates = df_list[df_list['ChgPct'] >= 10]['Code'].tolist()
             
-            if df_market.empty:
-                st.error("해당 날짜의 장 데이터를 불러올 수 없습니다.")
-            else:
-                st.write("2단계: 급등 후보군 필터링...")
-                candidates = df_market[df_market['등락률'] >= 15].index.tolist()
-                
-                st.write(f"3단계: {len(candidates)}개 종목 정밀 분석...")
-                found = []
-                for t in candidates:
-                    res, status = run_analysis(t, analysis_date, app_mode)
-                    if res and ("매수" in status or "추천" in status):
-                        found.append({
-                            "종목명": ticker_dict.get(t, t),
-                            "코드": t,
-                            "상태": status,
-                            "현재가": f"{res['current_price']:,}원",
-                            "목표가": f"{res['target']:,}원"
-                        })
-                
-                status_box.update(label="스캔 완료!", state="complete", expanded=False)
-                if found: st.dataframe(pd.DataFrame(found), use_container_width=True)
-                else: st.write("조건에 맞는 종목이 없습니다.")
+            st.write(f"2단계: {len(candidates)}개 후보 종목 정밀 분석...")
+            found = []
+            for t in candidates:
+                res, status = run_analysis(t, analysis_date, app_mode)
+                if res and ("매수" in status or "추천" in status):
+                    found.append({
+                        "종목명": ticker_dict.get(t, t),
+                        "코드": t,
+                        "상태": status,
+                        "현재가": f"{res['current_price']:,}원",
+                        "목표가": f"{res['target']:,}원"
+                    })
+            status_box.update(label="스캔 완료!", state="complete", expanded=False)
+            if found: st.dataframe(pd.DataFrame(found), use_container_width=True)
+            else: st.write("조건 부합 종목 없음")
 
     # [C] 최근 조회 기록
     if "recent_logs" in st.session_state and st.session_state["recent_logs"]:
