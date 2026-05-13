@@ -198,6 +198,28 @@ if st.button("🚀 전 종목 스캔 시작 (상위 500개)", use_container_widt
     with st.spinner("시장 데이터 분석 중..."):
         if krx_df.empty: st.error("KRX 서버 장애로 스캔이 불가능합니다.")
         else:
+            # --- 스캔 진행 상황 표시창 추가 시작 ---
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        # --- 스캔 진행 상황 표시창 추가 끝 ---
+        
+        krx_codes = krx_df.head(500)['Code'].tolist()
+        total_count = len(krx_codes)
+        all_res = []
+        
+        for i, c in enumerate(krx_codes):
+            # 진행률 업데이트 (0.0 ~ 1.0 사이)
+            progress = (i + 1) / total_count
+            progress_bar.progress(progress)
+            status_text.text(f"⏳ 전체 500개 종목 중 {i + 1}개 분석 중... ({int(progress * 100)}%)")
+            
+            r, _ = analyze_v5(c, datetime.date.today())
+            if r:
+                all_res.append(r)
+        
+        # 스캔 완료 후 진행창 제거
+        progress_bar.empty()
+        status_text.empty()
             krx_codes = krx_df.head(500)['Code'].tolist()
             all_res = []
             for c in krx_codes:
