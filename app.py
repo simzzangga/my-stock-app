@@ -163,7 +163,7 @@ if btn_analysis and input_ticker:
 
 # --- [5단계] 분석 로그 및 스캐너 ---
 st.divider()
-st.subheader("🕒 최근 정밀 분석 로그 (클릭 시 종목명 입력)")
+st.subheader("🕒 최근 분석")
 if analysis_log:
     cols = st.columns(5)
     for i, log in enumerate(analysis_log[:20]):
