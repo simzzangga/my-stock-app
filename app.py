@@ -5,6 +5,7 @@ import datetime
 import json
 import os
 import plotly.graph_objects as go
+import time
 
 # --- 데이터 영구 저장 시스템 ---
 LOG_FILE = "trade_v5_log.json"
@@ -55,12 +56,11 @@ if not st.session_state.auth:
         else: st.error("비밀번호 불일치")
     st.stop()
 
-# --- [2단계] 사이드바: 자산 및 검색 ---
+# --- [2단계] 사이드바 ---
 st.sidebar.title("🏁 1억 만들기")
-target_goal = 100000000
 current_balance = trade_data["balance"]
 st.sidebar.metric("현재 자산", f"{current_balance:,}원")
-st.sidebar.progress(min(current_balance / target_goal, 1.0))
+st.sidebar.progress(min(current_balance / 100000000, 1.0))
 
 st.sidebar.divider()
 st.sidebar.subheader("🔍 종목명/종목코드 검색")
@@ -93,17 +93,15 @@ def analyze_v5(ticker, base_date):
         curr = df.iloc[-1]
         res = {
             "code": ticker, "curr": int(curr['종가']), "t_low": int(target['저가']),
-            "stop": int(target['저가'] * 0.95), "vol_force": (1 - (curr['거래량'] / target['거래량'])) * 100,
-            "is_buy": target['저가'] <= curr['종가'] <= target['저가'] * 1.03
+            "stop": int(target['저가'] * 0.95), "is_buy": target['저가'] <= curr['종가'] <= target['저가'] * 1.03
         }
         return res, df
     except: return None, None
 
-# --- [3단계] 메인 화면: 실전 매매 관리 (복구 완료) ---
+# --- [3단계] 메인 화면: 실전 매매 관리 ---
 st.title("🖥️ 살까 말까, 팔까 말까")
-
 if mon_stocks:
-    st.subheader("📌 실전 매매 관리 (보유/모니터링)")
+    st.subheader("📌 실전 매매 관리")
     for idx, s in enumerate(mon_stocks):
         with st.container(border=True):
             c1, c2, c3, c4 = st.columns([1.5, 2, 3, 1])
@@ -125,6 +123,7 @@ st.subheader("🔍 종목 정밀 분석")
 with st.container(border=True):
     col_s1, col_s2, col_s3 = st.columns([2, 2, 1])
     input_ticker = col_s1.text_input("종목코드 입력", value=st.session_state.auto_code)
+    # 날짜 고정 유지 로직
     analysis_date = col_s2.date_input("분석 기준일", value=datetime.date.today() if "current_date" not in st.session_state else st.session_state.current_date)
     st.session_state.current_date = analysis_date
     btn_analysis = col_s3.button("📊 분석", use_container_width=True, type="primary")
@@ -132,12 +131,13 @@ with st.container(border=True):
 if btn_analysis and input_ticker:
     res, df = analyze_v5(input_ticker, analysis_date)
     if res:
-        # 종목명 매칭 및 로그 저장 (종목명 / 종목코드)
+        # 종목명 매칭
         disp_name = input_ticker
         if not krx_df.empty:
             match = krx_df[krx_df['Code'] == input_ticker]
             if not match.empty: disp_name = match['Name'].values[0]
         
+        # [수정] 분석 실행 시 로그 즉시 저장 (종목명 / 종목코드)
         analysis_log = [l for l in analysis_log if l['code'] != input_ticker]
         analysis_log.insert(0, {"name": disp_name, "code": input_ticker})
         save_data(ANALYSIS_LOG_FILE, analysis_log[:20])
@@ -148,40 +148,53 @@ if btn_analysis and input_ticker:
                                             increasing_line_color='red', decreasing_line_color='blue')])
         fig.add_hline(y=res['t_low'], line_dash="dash", line_color="green", annotation_text="기준봉 저가")
         fig.add_hline(y=res['stop'], line_color="magenta", annotation_text="손절선")
-        fig.update_layout(height=450, xaxis_rangeslider_visible=False, template="plotly_dark", margin=dict(l=10, r=10, t=30, b=10))
+        fig.update_layout(height=450, xaxis_rangeslider_visible=False, template="plotly_dark")
         st.plotly_chart(fig, use_container_width=True)
 
-        # 보유 종목으로 등록하는 기능 (매수 전략 창)
-        with st.expander("📝 매수 전략 등록 (보유 종목 리스트에 추가)"):
+        with st.expander("📝 매수 전략 등록"):
             c_m1, c_m2 = st.columns(2)
-            buy_memo = c_m1.text_input("매수 사유/메모")
+            buy_memo = c_m1.text_input("매수 메모")
             buy_amt = c_m2.number_input("매수 금액(원)", value=int(current_balance*0.08))
             if st.button("🔥 실전 매수 종목으로 등록"):
                 trade_data["balance"] -= buy_amt
                 mon_stocks.append({"name": disp_name, "buy_price": res['curr'], "stop": res['stop'], "amt1": buy_amt, "memo": buy_memo})
                 save_data(LOG_FILE, trade_data); save_data(MONITOR_FILE, mon_stocks); st.rerun()
 
-# --- [5단계] 분석 로그 및 스캐너 ---
+# --- [5단계] 분석 로그 ---
 st.divider()
-st.subheader("🕒 최근 분석")
+st.subheader("🕒 최근 정밀 분석 로그 (클릭 시 해당 종목 입력)")
 if analysis_log:
     cols = st.columns(5)
     for i, log in enumerate(analysis_log[:20]):
         with cols[i % 5]:
-            # [수정 완료] 종목명 / 종목코드 표시
-            btn_txt = f"{log['name']}\n{log['code']}"
-            if st.button(btn_txt, key=f"alog_{log['code']}_{i}", use_container_width=True):
+            if st.button(f"{log['name']}\n{log['code']}", key=f"alog_{log['code']}_{i}", use_container_width=True):
                 st.session_state.auto_code = log['code']
                 st.rerun()
 
+# --- [6단계] 시장 스캐너 (진행바 및 예상 시간 복구) ---
 st.divider()
 st.subheader("📡 오후 3시 전략 스캐너")
 if st.button("🚀 전 종목 스캔 (상위 500개)", use_container_width=True):
-    with st.spinner("스캔 중..."):
-        if not krx_df.empty:
-            krx_codes = krx_df.head(500)['Code'].tolist()
-            all_res = []
-            for c in krx_codes:
-                r, _ = analyze_v5(c, datetime.date.today())
-                if r: all_res.append(r)
-            st.session_state.last_scan = {"results": all_res, "time": datetime.datetime.now().strftime("%H:%M")}
+    if not krx_df.empty:
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        krx_codes = krx_df.head(500)['Code'].tolist()
+        total = len(krx_codes)
+        all_res = []
+        start_time = time.time()
+
+        for i, c in enumerate(krx_codes):
+            r, _ = analyze_v5(c, datetime.date.today())
+            if r: all_res.append(r)
+            
+            # 진행률 및 예상 시간 계산
+            pct = (i + 1) / total
+            elapsed = time.time() - start_time
+            eta = (elapsed / pct) - elapsed if pct > 0 else 0
+            progress_bar.progress(pct)
+            status_text.text(f"⏳ {i+1}/{total} 분석 중... (남은 시간: 약 {int(eta)}초)")
+
+        st.session_state.last_scan = {"results": all_res, "time": datetime.datetime.now().strftime("%H:%M")}
+        progress_bar.empty()
+        status_text.success("✅ 스캔 완료!")
+        st.rerun()
