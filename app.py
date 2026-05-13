@@ -198,11 +198,8 @@ if st.button("🚀 전 종목 스캔 시작 (상위 500개)", use_container_widt
     with st.spinner("시장 데이터 분석 중..."):
         if krx_df.empty: st.error("KRX 서버 장애로 스캔이 불가능합니다.")
         else:
-            # --- 스캔 진행 상황 표시창 추가 시작 ---
         progress_bar = st.progress(0)
         status_text = st.empty()
-        # --- 스캔 진행 상황 표시창 추가 끝 ---
-        
         krx_codes = krx_df.head(500)['Code'].tolist()
         total_count = len(krx_codes)
         all_res = []
