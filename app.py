@@ -46,8 +46,8 @@ if "auth" not in st.session_state: st.session_state.auth = False
 
 # --- [1단계] 보안 설정 ---
 if not st.session_state.auth:
-    st.title("💰 Shim's 100M Project Portal")
-    st.info("비밀번호 4자리를 입력하면 자동으로 입장합니다.")
+    st.title("💰 Shim's MSM Portal v5.2")
+    st.info("1억 프로젝트 From 202605")
     pwd = st.text_input("Access Key (4 digits)", type="password", max_chars=4, key="entry_pwd")
     if len(pwd) == 4:
         if pwd == "1234":
@@ -57,7 +57,7 @@ if not st.session_state.auth:
     st.stop()
 
 # --- [2단계] 사이드바: 자산 관리 및 목표 달성 게이지 ---
-st.sidebar.title("🏁 1억 만들기 플랜")
+st.sidebar.title("🏁 1억 만들기")
 target_goal = 100000000
 current_balance = trade_data["balance"]
 progress = min(current_balance / target_goal, 1.0)
@@ -135,7 +135,7 @@ def analyze_v5(ticker, base_date):
     except: return None, None
 
 # --- [5단계] 메인 화면: 실시간 모니터링 ---
-st.title("🖥️ MSM Pro: 실시간 대응 포털")
+st.title("🖥️ 살까 말까, 팔까 말까")
 if mon_stocks:
     for idx, s in enumerate(mon_stocks):
         with st.container(border=True):
@@ -161,7 +161,7 @@ with st.container(border=True):
     col_s1, col_s2, col_s3 = st.columns([2, 2, 1])
     input_ticker = col_s1.text_input("종목코드 입력", value=st.session_state.auto_code, placeholder="예: 005930")
     analysis_date = col_s2.date_input("분석 기준일", datetime.date.today())
-    btn_analysis = col_s3.button("📊 분석 및 차트 로드", use_container_width=True, type="primary")
+    btn_analysis = col_s3.button("📊 분석", use_container_width=True, type="primary")
 
 if btn_analysis and input_ticker:
     res, df = analyze_v5(input_ticker, analysis_date)
