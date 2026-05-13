@@ -148,16 +148,54 @@ if check_password():
     else:
         st.write("조회 기록이 없습니다.")
 
-    # [C] 스캐너 (기존 로직 유지)
+   # [C] 스캐너 (KeyError 보정 버전)
     st.markdown("---")
-    if st.button("🚀 전 종목 고속 스캔 (10% 이상 급등주 대상)", use_container_width=True):
-        with st.status("시장 분석 중...") as s_box:
-            df_list = fdr.StockListing('KRX')
-            candidates = df_list[df_list['ChgPct'] >= 0.1]['Code'].tolist()
-            found = []
-            for t in candidates[:50]:
-                res_s, status_s = run_analysis(str(t), analysis_date, app_mode)
-                if res_s and ("매수" in status_s or "추천" in status_s):
-                    found.append({"종목명": code_to_name.get(t, t), "코드": t, "상태": status_s, "현재가": f"{res_s['current_price']:,}", "목표가": f"{res_s['target']:,}"})
-            if found: st.dataframe(pd.DataFrame(found), use_container_width=True)
-            else: st.write("조건 부합 종목 없음")
+    if st.button("🚀 전 종목 고속 스캔 (급등주 대상)", use_container_width=True):
+        with st.status("시장 데이터를 분석 중입니다...") as s_box:
+            try:
+                # 1. 전체 종목 리스팅
+                df_list = fdr.StockListing('KRX')
+                
+                # 2. 등락률 컬럼명 유연한 감지 (ChgPct, Change, 등락률 등)
+                col_candidates = ['ChgPct', 'Change', '등락률', 'Rate']
+                target_col = None
+                for col in col_candidates:
+                    if col in df_list.columns:
+                        target_col = col
+                        break
+                
+                if target_col:
+                    # 등락률이 10% (0.1) 이상인 종목 필터링
+                    # FDR 버전에 따라 소수점(0.1)일 수도, 퍼센트(10)일 수도 있으므로 보정
+                    if df_list[target_col].max() > 1.0: # 퍼센트 단위인 경우
+                        candidates = df_list[df_list[target_col] >= 10]['Code'].tolist()
+                    else: # 소수점 단위인 경우
+                        candidates = df_list[df_list[target_col] >= 0.1]['Code'].tolist()
+                else:
+                    # 컬럼명을 못 찾을 경우 안전하게 전체 리스트의 상위 일부만 시도
+                    candidates = df_list['Code'].head(100).tolist()
+                    st.warning("등락률 컬럼을 찾을 수 없어 상위 100개 종목만 정밀 분석합니다.")
+
+                found = []
+                # 분석 부하를 줄이기 위해 최대 100개까지만 정밀 분석 진행
+                for t in candidates[:100]:
+                    res_s, status_s = run_analysis(str(t), analysis_date, app_mode)
+                    if res_s and ("매수" in status_s or "추천" in status_s):
+                        found.append({
+                            "종목명": code_to_name.get(t, t), 
+                            "코드": t, 
+                            "상태": status_s, 
+                            "현재가": f"{res_s['current_price']:,}원", 
+                            "목표가": f"{res_s['target']:,}원"
+                        })
+                
+                s_box.update(label="스캔 완료!", state="complete", expanded=False)
+                
+                if found: 
+                    st.success(f"조건에 맞는 종목 {len(found)}개를 찾았습니다.")
+                    st.dataframe(pd.DataFrame(found), use_container_width=True)
+                else: 
+                    st.write("현재 조건(급등 후 눌림)에 부합하는 종목이 없습니다.")
+                    
+            except Exception as e:
+                st.error(f"스캐너 구동 중 예상치 못한 오류가 발생했습니다: {e}")
