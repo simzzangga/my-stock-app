@@ -66,7 +66,7 @@ st.sidebar.progress(min(current_balance / 100000000, 1.0))
 st.sidebar.divider()
 st.sidebar.subheader("🔍 종목명/종목코드 검색")
 if not krx_df.empty:
-    selected_name = st.sidebar.selectbox("종목명 검색", krx_df['Name'].tolist(), index=None, placeholder="코드 확인용")
+    selected_name = st.sidebar.selectbox("종목명 검색", krx_df['Name'].tolist(), index=None, placeholder="종목명/종목코드")
     if selected_name:
         target_code = krx_df[krx_df['Name'] == selected_name]['Code'].values[0]
         if st.sidebar.button(f"✅ {selected_name} : {target_code}", use_container_width=True):
@@ -169,7 +169,7 @@ if btn_analysis and input_ticker:
 
 # --- [5단계] 최근 정밀 분석 로그 (날짜 유지 버전) ---
 st.divider()
-st.subheader("🕒 최근 정밀 분석 로그 (클릭 시 종목명 입력)")
+st.subheader("🕒 최근 정밀 분석")
 if analysis_log:
     cols = st.columns(5)
     for i, log in enumerate(analysis_log[:20]):
