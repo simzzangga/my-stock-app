@@ -29,18 +29,24 @@ search_history = load_data(SEARCH_HISTORY_FILE, [])
 
 st.set_page_config(page_title="Shim's 100M Project", layout="wide")
 
-# --- 보안 설정: 4자리 입력 시 자동 입장 ---
-if "auth" not in st.session_state: st.session_state.auth = False
+# --- [수정] 보안 설정: 4자리 입력 시 즉시 반응 ---
+if "auth" not in st.session_state:
+    st.session_state.auth = False
+
 if not st.session_state.auth:
     st.title("💰 Shim's 100M Project Portal")
-    pwd = st.text_input("Access Key (4 digits)", type="password", max_chars=4)
-    # 4자리 입력 시 별도 버튼 없이 즉시 체크
+    st.info("비밀번호 4자리를 입력하면 자동으로 입장합니다.")
+    
+    # on_change 대신 입력값 실시간 체크를 위해 key 활용
+    pwd = st.text_input("Access Key (4 digits)", type="password", max_chars=4, key="pwd_input")
+    
+    # 4자리가 완성되면 즉시 검증
     if len(pwd) == 4:
         if pwd == "1234":
             st.session_state.auth = True
-            st.rerun()
+            st.rerun() # 즉시 메인 페이지로 이동
         else:
-            st.error("비밀번호가 틀렸습니다.")
+            st.error("비밀번호가 올바르지 않습니다.")
     st.stop()
 
 # --- 사이드바: 자산 및 로그 관리 ---
