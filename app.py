@@ -205,7 +205,3 @@ if st.button("🚀 전 종목 스캔 (상위 500개)", use_container_width=True)
                 r, _ = analyze_v5(c, datetime.date.today())
                 if r: all_res.append(r)
             st.session_state.last_scan = {"results": all_res, "time": datetime.datetime.now().strftime("%H:%M")}
-                        if st.button("🔥 매수 등록", key=f"b_{item['code']}"):
-                            b_amt = int(current_balance * 0.08); trade_data["balance"] -= b_amt
-                            mon_stocks.append({"name":item['code'], "buy_price":item['curr'], "stop":item['stop'], "amt1":b_amt, "memo":m_in})
-                            save_data(LOG_FILE, trade_data); save_data(MONITOR_FILE, mon_stocks); st.rerun()
