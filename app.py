@@ -2,205 +2,147 @@ import streamlit as st
 import FinanceDataReader as fdr
 import pandas as pd
 import datetime
-import time
+import json
+import os
 
-# --- 1. 보안 및 세션 설정 ---
-def check_password():
-    if "password_correct" not in st.session_state:
-        st.session_state["password_correct"] = False
-    if st.session_state["password_correct"]: return True
+# --- 데이터 영구 저장 시스템 ---
+LOG_FILE = "trade_v5_log.json"
+MONITOR_FILE = "monitoring_v5.json"
+SCAN_FILE = "scan_results_v5.json"
 
-    st.title("💰 Shim's MSM Portal")
-    password = st.text_input("비밀번호를 입력하세요", type="password")
-    if st.button("접속", use_container_width=True):
-        if password == st.secrets.get("password", "1234"): 
-            st.session_state["password_correct"] = True
-            st.rerun()
-        else: st.error("비밀번호가 틀렸습니다.")
-    return False
-
-# --- 2. 데이터 엔진 (FDR 기반) ---
-@st.cache_data(ttl=86400)
-def get_ticker_dict():
+def load_data(file_path, default_val):
     try:
-        df_krx = fdr.StockListing('KRX')
-        code_to_name = dict(zip(df_krx['Code'].astype(str), df_krx['Name']))
-        name_to_code = dict(zip(df_krx['Name'], df_krx['Code'].astype(str)))
-        top_tickers = df_krx.sort_values(by='Amount', ascending=False)['Code'].head(500).tolist()
-        return code_to_name, name_to_code, top_tickers
-    except:
-        return {"005930": "삼성전자"}, {"삼성전자": "005930"}, ["005930"]
+        if os.path.exists(file_path):
+            with open(file_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except: pass
+    return default_val
 
-@st.cache_data(ttl=600)
-def get_robust_ohlcv(ticker, start, end):
-    if not ticker: return pd.DataFrame()
-    for _ in range(3):
-        try:
-            df = fdr.DataReader(ticker, start, end)
-            if df is not None and not df.empty:
-                df.columns = [c.upper() for c in df.columns]
-                rename_map = {'OPEN': '시가', 'HIGH': '고가', 'LOW': '저가', 'CLOSE': '종가', 'VOLUME': '거래량', 'CHANGE': '등락률'}
-                df = df.rename(columns=rename_map)
-                if '등락률' not in df.columns: df['등락률'] = df['종가'].pct_change()
-                df['등락률'] = df['등락률'].fillna(0) * 100
-                return df
-            time.sleep(0.05)
-        except: continue
-    return pd.DataFrame()
+def save_data(file_path, data):
+    with open(file_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=4)
 
-def add_search_log(log_text):
-    if "search_logs" not in st.session_state: st.session_state["search_logs"] = []
-    if log_text in st.session_state["search_logs"]: st.session_state["search_logs"].remove(log_text)
-    st.session_state["search_logs"].insert(0, log_text)
-    st.session_state["search_logs"] = st.session_state["search_logs"][:10]
+# 데이터 로드
+trade_data = load_data(LOG_FILE, {"balance": 10000000, "history": []})
+mon_stocks = load_data(MONITOR_FILE, [])
 
-# --- 3. 분석 엔진 (v3.3 & v4.0) ---
-def run_analysis(ticker, base_date, mode):
-    start_date = (base_date - datetime.timedelta(days=365)).strftime("%Y-%m-%d")
-    end_date = base_date.strftime("%Y-%m-%d")
-    df = get_robust_ohlcv(ticker, start_date, end_date)
-    
-    if df.empty or len(df) < 15: return None, "데이터 부족"
-    current_price = int(df['종가'].iloc[-1])
-    
-    if "v3.3" in mode:
-        spikes = df[df['등락률'] >= 15]
-        if spikes.empty: return None, "패턴 없음"
-        recent = spikes.tail(1)
-        s_date = recent.index[0]
-        if (base_date - s_date.date()).days > 60: return None, "기준봉 노후화"
+st.set_page_config(page_title="Shim's 100M Project", layout="wide")
+
+# --- 보안 설정 ---
+if "auth" not in st.session_state: st.session_state.auth = False
+if not st.session_state.auth:
+    pwd = st.text_input("Access Key", type="password")
+    if pwd == "1234":
+        st.session_state.auth = True
+        st.rerun()
+    st.stop()
+
+# --- 사이드바: 자산 관리 ---
+st.sidebar.title("💰 자산 및 플랜")
+current_balance = st.sidebar.number_input("현재 자산 수정", value=trade_data["balance"], step=100000)
+if st.sidebar.button("자산 데이터 업데이트"):
+    trade_data["balance"] = current_balance
+    save_data(LOG_FILE, trade_data)
+    st.toast("자산 정보가 업데이트되었습니다.")
+
+per_trade = trade_data["balance"] * 0.2
+st.sidebar.divider()
+st.sidebar.info(f"**종목당 한도:** {int(per_trade):,}원\n(1차 40% / 2차 60%)")
+
+# --- 분석 엔진 (V5.2 고도화 + 3.11 호환) ---
+@st.cache_data(ttl=3600) # 3.11 성능 최적화 캐싱
+def analyze_stock(ticker, base_date):
+    try:
+        # 데이터 수집
+        df = fdr.DataReader(ticker, base_date - datetime.timedelta(days=80), base_date)
+        if df.empty or len(df) < 20: return None
         
-        s_close, s_open, s_vol = int(recent['종가'].iloc[0]), int(recent['시가'].iloc[0]), float(recent['거래량'].iloc[0])
-        s_body = s_close - s_open
-        vol_ratio = float(df['거래량'].iloc[-1]) / s_vol if s_vol != 0 else 0
-        b_high, b_low = s_close - (s_body * 0.382), s_close - (s_body * 0.618)
+        df.columns = [c.upper() for c in df.columns]
+        df = df.rename(columns={'OPEN':'시가','HIGH':'고가','LOW':'저가','CLOSE':'종가','VOLUME':'거래량'})
         
-        if vol_ratio <= 0.20 and b_low <= current_price <= b_high: status = "🚀 강력 추천"
-        elif vol_ratio <= 0.30 and current_price >= b_low: status = "🛒 분할 매수"
-        else: return None, "구간 이탈"
+        # 1. 몸통 강도 및 거래량 필터 (사고 모델 반영)
+        df['BODY_RATIO'] = (df['종가'] - df['시가']).abs() / (df['고가'] - df['저가'])
+        df['VOL_AVG'] = df['거래량'].rolling(20).mean()
         
-        return {"spike_date": s_date.strftime("%Y-%m-%d"), "current_price": current_price, "target": int(current_price*1.1), "vol_ratio": vol_ratio, "buy_zone": f"{int(b_low):,}~{int(b_high):,}", "stop": int(s_open*0.98)}, status
-    
-    else: # v4.0
-        df['vol20'] = df['거래량'].rolling(20).mean()
-        spikes = df[(df['등락률'] >= 15) & (df['거래량'] > df['vol20'] * 2.5)]
-        if spikes.empty: return None, "기준봉 미달"
-        recent = spikes.tail(1)
-        s_date = recent.index[0]
-        if (base_date - s_date.date()).days > 45: return None, "기준봉 노후화"
+        spikes = df[(df['종가'] > df['시가']) & (df['BODY_RATIO'] > 0.7) & (df['거래량'] > df['VOL_AVG'] * 5)]
+        if spikes.empty: return None
         
-        s_close, s_open, s_high = int(recent['종가'].iloc[0]), int(recent['시가'].iloc[0]), int(recent['고가'].iloc[0])
-        s_body = s_close - s_open
-        b1, b2, b3 = s_close-(s_body*0.382), s_close-(s_body*0.5), s_close-(s_body*0.618)
+        target = spikes.tail(1).iloc[0]
+        curr = df.iloc[-1]
         
-        if b1 >= current_price > b2: status = "🟡 1차 타점"
-        elif b2 >= current_price > b3: status = "🟠 2차 타점"
-        elif b3 >= current_price > s_open*0.98: status = "🔴 3차 타점"
-        else: return None, "구간 이탈"
+        # 2. 가짜 눌림목 판별 (하방 경직성 체크)
+        if df['저가'].tail(2).min() < target['저가'] * 0.98: return None
         
-        return {"spike_date": s_date.strftime("%Y-%m-%d"), "current_price": current_price, "b1": int(b1), "b2": int(b2), "b3": int(b3), "target": int(s_high*0.98), "stop": int(s_open*0.98)}, status
+        return {
+            "code": ticker, "curr": int(curr['종가']), "t_low": int(target['저가']),
+            "stop": int(target['저가'] * 0.95),
+            "is_buy_zone": target['저가'] <= curr['종가'] <= target['저가'] * 1.03,
+            "dist": (curr['종가'] - target['저가']) / target['저가'],
+            "vol_red": curr['거래량'] / target['거래량'],
+            "t_date": spikes.tail(1).index[0].strftime("%Y-%m-%d")
+        }
+    except: return None
 
-# --- 4. 메인 UI ---
-st.set_page_config(page_title="Shim's MSM Dual Pro", layout="wide")
+# --- 메인 화면: 모니터링 ---
+st.title("🖥️ MSM Pro: 실시간 대응 포털")
+if mon_stocks:
+    for idx, s in enumerate(mon_stocks):
+        with st.container(border=True):
+            c1, c2, c3, c4 = st.columns([1.5, 2, 3, 1])
+            c1.metric(s['name'], f"{s['buy_price']:,}원", f"손절가 {s['stop']:,}")
+            c2.info(f"진입액: {s['amt1']:,}원\n메모: {s.get('memo', '-')}")
+            with c3:
+                sc1, sc2 = st.columns(2)
+                amt2 = sc1.number_input("2차 매수액", value=int(per_trade*0.6), key=f"a2_{idx}")
+                memo2 = sc2.text_input("대응 메모", key=f"m2_{idx}")
+                if st.button("2차 매수 기록", key=f"b2_{idx}"):
+                    trade_data["balance"] -= amt2
+                    s['amt1'] += amt2
+                    s['memo'] += f" | 2차:{memo2}"
+                    save_data(LOG_FILE, trade_data)
+                    save_data(MONITOR_FILE, mon_stocks)
+                    st.rerun()
+            if c4.button("🔴 매도", key=f"sell_{idx}"):
+                mon_stocks.pop(idx)
+                save_data(MONITOR_FILE, mon_stocks)
+                st.rerun()
 
-if check_password():
-    code_to_name, name_to_code, top_tickers = get_ticker_dict()
-    
-    st.sidebar.title("⚙️ 시스템 설정")
-    app_mode = st.sidebar.radio("엔진 모드 선택", ["v3.3 (수급 중심)", "v4.0 (타점 중심)"])
-    
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("🔍 종목코드 조회")
-    search_name = st.sidebar.text_input("종목명 입력")
-    if search_name:
-        f_code = name_to_code.get(search_name)
-        if f_code: st.sidebar.success(f"코드: `{f_code}`")
-        else: st.sidebar.error("검색 결과 없음")
+# --- 스캐너 섹션 ---
+st.divider()
+st.subheader("📡 오후 3시 전략 스캐너")
+now = datetime.datetime.now()
+is_after_3 = (now.hour >= 15)
 
-    st.title(f"📊 Shim's MSM - {app_mode}")
-
-    # [TOP] 개별 종목 분석 섹션
-    st.markdown("### 🔍 종목 정밀 분석")
-    with st.container(border=True):
-        c1, c2, c3 = st.columns([2, 2, 1.2])
-        with c1:
-            input_ticker = st.text_input("종목코드", value="265560", placeholder="6자리 입력")
-        with c2:
-            analysis_date = st.date_input("분석 기준일", datetime.date.today())
-        with c3:
-            st.markdown('<p style="margin-bottom: 28px;"></p>', unsafe_allow_html=True)
-            btn_run = st.button("📊 분석 실행", use_container_width=True, type="primary")
-
-    if btn_run or input_ticker:
-        name = code_to_name.get(input_ticker, "Unknown")
-        res, status = run_analysis(input_ticker, analysis_date, app_mode)
-        if res:
-            add_search_log(f"{name} ({input_ticker})")
-            st.success(f"🎯 {name} 분석 결과: {status}")
-            m1, m2, m3, m4 = st.columns(4)
-            m1.metric("현재가", f"{res['current_price']:,}원")
-            m2.metric("목표가", f"{res['target']:,}원")
-            if "v3.3" in app_mode:
-                m3.metric("거래비율", f"{res['vol_ratio']:.1%}")
-                st.table(pd.DataFrame({"항목": ["기준봉일", "매수구간", "손절가"], "내용": [res['spike_date'], res['buy_zone'], f"{res['stop']:,}원"]}))
-            else:
-                m3.metric("1차타점", f"{res['b1']:,}원")
-                st.table(pd.DataFrame({"항목": ["기준봉일", "2차타점", "3차타점", "손절가"], "내용": [res['spike_date'], f"{res['b2']:,}원", f"{res['b3']:,}원", f"{res['stop']:,}원"]}))
-        else: st.info(f"알림: {status}")
-
-    # [MID] 최근 조회 기록 섹션
-    st.markdown("---")
-    st.subheader("🕒 최근 조회 기록")
-    if "search_logs" in st.session_state and st.session_state["search_logs"]:
-        l_cols = st.columns(5)
-        for idx, log in enumerate(st.session_state["search_logs"]):
-            l_cols[idx % 5].button(log, key=f"log_{idx}", use_container_width=True)
-    else:
-        st.caption("최근 조회한 종목이 없습니다.")
-
-    # [BOTTOM] 시장 스캐너 섹션
-    st.markdown("---")
-    st.subheader("📡 실시간 매수 타점 스캐너")
-    st.caption("최근 20일 내 기준봉(급등) 발생 후 현재 눌림목 구간인 우량주 스캔 (상위 500종목)")
-    
-    # 스캔 결과 유지를 위한 세션 상태 초기화
-    if "scan_results" not in st.session_state:
-        st.session_state["scan_results"] = None
-    if "scan_time" not in st.session_state:
-        st.session_state["scan_time"] = None
-
-    if st.button("🚀 전체 시장 스캔 시작", use_container_width=True):
-        found = []
-        progress_text = st.empty()
-        bar = st.progress(0)
+if st.button("🚀 전 종목 스캔 시작 (상위 500개)", use_container_width=True):
+    with st.spinner("3.11 엔진 가동 중..."):
+        krx = fdr.StockListing('KRX')
+        results = [analyze_stock(c, datetime.date.today()) for c in krx.head(500)['Code'].tolist()]
+        results = [r for r in results if r]
         
-        for i, t in enumerate(top_tickers):
-            if i % 50 == 0:
-                progress_text.text(f"스캐닝 진행 중... ({i}/{len(top_tickers)})")
-                bar.progress(i / len(top_tickers))
-            
-            res_s, status_s = run_analysis(t, analysis_date, app_mode)
-            if res_s:
-                found.append({
-                    "종목명": code_to_name.get(t, t),
-                    "코드": t,
-                    "상태": status_s,
-                    "현재가": f"{res_s['current_price']:,}원",
-                    "목표가": f"{res_s['target']:,}원"
-                })
+        group_a = sorted([r for r in results if 0 <= r['dist'] <= 0.03], key=lambda x: x['dist'])[:10]
+        group_b = sorted([r for r in results if r['vol_red'] <= 0.20], key=lambda x: x['vol_red'])[:10]
         
-        bar.empty()
-        progress_text.empty()
-        
-        # 결과 및 시간 저장
-        st.session_state["scan_results"] = found
-        st.session_state["scan_time"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        scan_data = {"A": group_a, "B": group_b, "time": now.strftime("%Y-%m-%d %H:%M:%S")}
+        save_data(SCAN_FILE, scan_data)
+        st.session_state.last_scan = scan_data
 
-    # 저장된 스캔 결과 표시
-    if st.session_state["scan_results"] is not None:
-        st.markdown(f"⏱️ **최근 스캔 시점:** `{st.session_state['scan_time']}`")
-        if st.session_state["scan_results"]:
-            st.success(f"🔥 매수 적기 종목 {len(st.session_state['scan_results'])}건 발견")
-            st.dataframe(pd.DataFrame(st.session_state["scan_results"]), use_container_width=True)
-        else:
-            st.warning("최근 스캔 결과 매수 구간에 진입한 대상 종목이 없습니다.")
+scan_res = st.session_state.get("last_scan", load_data(SCAN_FILE, None))
+if scan_res:
+    for cat, title in [("A", "📍 그룹 A: 눌림목 완성"), ("B", "🔋 그룹 B: 에너지 응축")]:
+        st.markdown(f"#### {title}")
+        if not scan_res[cat]: st.caption("조건 부합 종목 없음")
+        for item in scan_res[cat]:
+            with st.expander(f"{item['code']} | 현재가: {item['curr']:,}원"):
+                col_i1, col_i2, col_i3 = st.columns([2, 2, 2])
+                col_i1.write(f"**손절가:** {item['stop']:,}원")
+                col_i2.write(f"**추천 1차액:** {int(per_trade*0.4):,}원")
+                with col_i3:
+                    if is_after_3:
+                        memo_in = st.text_input("메모", key=f"memo_{item['code']}")
+                        if st.button("🔥 매수 등록", key=f"btn_{item['code']}"):
+                            buy_amt = int(per_trade * 0.4)
+                            trade_data["balance"] -= buy_amt
+                            mon_stocks.append({"name":item['code'], "buy_price":item['curr'], "stop":item['stop'], "amt1":buy_amt, "memo":memo_in})
+                            save_data(LOG_FILE, trade_data); save_data(MONITOR_FILE, mon_stocks)
+                            st.rerun()
+                    else: st.warning("15:00 이후 활성화")
