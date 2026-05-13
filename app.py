@@ -34,6 +34,7 @@ def get_krx_list():
         return df[['Code', 'Name']]
     except: return pd.DataFrame(columns=['Code', 'Name'])
 
+# 데이터 로드
 trade_data = load_data(LOG_FILE, {"balance": 10000000})
 mon_stocks = load_data(MONITOR_FILE, [])
 search_history = load_data(SEARCH_HISTORY_FILE, [])
@@ -42,33 +43,46 @@ krx_df = get_krx_list()
 
 ST_PARAMS = {"target_cv": 1.8, "target_vol": 10.0}
 
-st.set_page_config(page_title="MSM AI Dual-Engine v5.9.14", layout="wide")
+st.set_page_config(page_title="MSM AI Dual-Engine v5.9.15", layout="wide")
 
 if "auth" not in st.session_state: st.session_state.auth = False
 if "auto_code" not in st.session_state: st.session_state.auto_code = ""
 if "scan_progress" not in st.session_state: st.session_state.scan_progress = 0
 if "scan_status" not in st.session_state: st.session_state.scan_status = "대기 중"
 if "scan_results" not in st.session_state: st.session_state.scan_results = []
+if "scan_etc" not in st.session_state: st.session_state.scan_etc = ""
 
 # --- 보안 설정 ---
 if not st.session_state.auth:
-    st.title("💰 MSM Portal v5.9.14")
+    st.title("💰 MSM Portal v5.9.15")
     pwd = st.text_input("Access Key", type="password", max_chars=4, key="entry_pwd")
     if pwd == "1234": st.session_state.auth = True; st.rerun()
     st.stop()
 
-# --- 사이드바 ---
-st.sidebar.title("🏁 1억 만들기")
-cur_bal = trade_data["balance"]
-st.sidebar.metric("현재 자산", f"{cur_bal:,}원")
+# --- [사이드바] 검색 및 기록 복구 (불필요한 자산 지표 삭제) ---
+st.sidebar.title("🔍 종목 검색 및 기록")
 if not krx_df.empty:
-    sel_name = st.sidebar.selectbox("종목 검색", krx_df['Name'].tolist(), index=None)
+    sel_name = st.sidebar.selectbox("종목명 입력", krx_df['Name'].tolist(), index=None, placeholder="종목명을 입력하세요")
     if sel_name:
         t_code = krx_df[krx_df['Name'] == sel_name]['Code'].values[0]
+        st.sidebar.success(f"✅ {sel_name} ({t_code})")
         if st.sidebar.button("분석창 입력", use_container_width=True):
-            st.session_state.auto_code = t_code; st.rerun()
+            st.session_state.auto_code = t_code
+            # 분석 로그 및 검색 히스토리 동시 기록
+            analysis_log = [l for l in analysis_log if l['code'] != t_code]
+            analysis_log.insert(0, {"name": sel_name, "code": t_code})
+            save_data(ANALYSIS_LOG_FILE, analysis_log[:20])
+            search_history = [h for h in search_history if h['code'] != t_code]
+            search_history.insert(0, {"name": sel_name, "code": t_code})
+            save_data(SEARCH_HISTORY_FILE, search_history[:10]); st.rerun()
 
-# --- [엔진] 분석 및 3분할 차수 판정 로직 ---
+st.sidebar.divider()
+st.sidebar.caption("🕒 최근 검색 기록")
+for h in search_history[:10]:
+    if st.sidebar.button(f"{h['name']} ({h['code']})", key=f"side_{h['code']}", use_container_width=True):
+        st.session_state.auto_code = h['code']; st.rerun()
+
+# --- [엔진] 3분할 눌림목 전략 반영 분석 로직 ---
 def analyze_v5(ticker, base_date):
     try:
         df = fdr.DataReader(ticker, base_date - datetime.timedelta(days=120), base_date)
@@ -76,7 +90,7 @@ def analyze_v5(ticker, base_date):
         df.columns = [c.upper() for c in df.columns]
         df = df.rename(columns={'OPEN':'시가','HIGH':'고가','LOW':'저가','CLOSE':'종가','VOLUME':'거래량'})
         
-        # 1. 지표 계산
+        # 지표 계산
         df['BODY_RATIO'] = (df['종가'] - df['시가']).abs() / (df['고가'] - df['저가'] + 1)
         df['VOL_MA'] = df['거래량'].rolling(20).mean()
         curr = df.iloc[-1]
@@ -87,29 +101,24 @@ def analyze_v5(ticker, base_date):
         vol_ratio = curr['거래량'] / (pre_20['거래량'].mean() + 1)
         similarity = ((max(0, 100 - (abs(cv - ST_PARAMS['target_cv']) * 25))) * 0.5) + ((min(100, (vol_ratio / ST_PARAMS['target_vol']) * 100)) * 0.5)
         
-        # 2. 매수 사인 및 차수 판정 (수정된 핵심 로직)
         if similarity >= 75:
-            # 실전 모니터링 리스트에 해당 종목이 있는지 확인하여 차수 결정
+            # 차수 판정 (모니터링 리스트 대조)
             matching_mon = [s for s in mon_stocks if s['code'] == ticker]
             if not matching_mon:
-                step_tag = "1차 매수 신호"
-                weight = "🔥 신규 진입 (1/3)"
+                step_tag, weight = "1차 매수 신호", "🔥 신규 진입 (1/3)"
             elif len(matching_mon) == 1:
-                step_tag = "2차 매수 신호 (눌림목)"
-                weight = "⚖️ 추가 물타기 (2/3)"
+                step_tag, weight = "2차 매수 신호", "⚖️ 눌림목 물타기 (2/3)"
             else:
-                step_tag = "3차 매수 신호 (최종)"
-                weight = "⚠️ 최종 비중 (3/3)"
+                step_tag, weight = "3차 매수 신호", "⚠️ 최종 비중 (3/3)"
 
             if similarity >= 85 and is_orig_buy: tag, color = f"💎 필승합의 ({step_tag})", "red"
             elif similarity >= 80: tag, color = f"🚀 급등유력 ({step_tag})", "red"
             else: tag, color = f"⚔️ 단기회전 ({step_tag})", "green"
             
-            plan = f"전략: 3~5일간 눌림목 분할 매수 | 목표가: {int(curr['종가']*1.1):,}원"
+            plan = "3~5일간 눌림목 분할 매수"
             is_valid_signal = True
         else:
-            tag, color, weight, plan = "🟡 관망", "grey", "❌ 사인없음", "가속도 조건 미달"
-            is_valid_signal = False
+            tag, color, weight, plan, is_valid_signal = "🟡 관망", "grey", "❌ 사인없음", "가속도 조건 미달", False
         
         return {"code": ticker, "curr": int(curr['종가']), "t_low": int(curr['저가']), "stop": int(curr['저가'] * 0.96), 
                 "similarity": similarity, "is_orig_buy": is_orig_buy, "tag": tag, "color": color, 
@@ -117,8 +126,38 @@ def analyze_v5(ticker, base_date):
                 "cv": cv, "vol_ratio": vol_ratio, "body": curr['BODY_RATIO']}, df
     except: return None, None
 
+def background_scanner(codes):
+    results = []
+    total = len(codes)
+    start_t = time.time()
+    for i, c in enumerate(codes):
+        try:
+            st.session_state.scan_progress = int(((i+1)/total)*100)
+            elapsed = time.time() - start_t
+            avg = elapsed / (i+1)
+            rem = int(avg * (total - (i+1)))
+            st.session_state.scan_etc = f"{rem//60}분 {rem%60}초"
+            st.session_state.scan_status = f"분석 중: {i+1}/{total} (남은시간: {st.session_state.scan_etc})"
+            r, _ = analyze_v5(c, datetime.date.today())
+            if r and r['is_valid']: results.append(r)
+            time.sleep(0.3)
+        except: continue
+    st.session_state.scan_results = sorted(results, key=lambda x: x['similarity'], reverse=True)
+    st.session_state.scan_status = "완료"
+
 # --- 메인 화면 ---
-st.title("🖥️ MSM AI Dual-Engine v5.9.14")
+st.title("🖥️ MSM AI Dual-Engine v5.9.15")
+
+# 실전 매매 현황
+if mon_stocks:
+    for idx, s in enumerate(mon_stocks):
+        with st.container(border=True):
+            c1, c2, c3, c4 = st.columns([1.5, 2, 3, 1])
+            c1.subheader(s['name'])
+            c2.info(f"진입가: {s['buy_price']:,}원")
+            c3.write(f"메모: {s['memo']}")
+            if c4.button("🔴 매도완료", key=f"sell_{idx}", use_container_width=True):
+                mon_stocks.pop(idx); save_data(MONITOR_FILE, mon_stocks); st.rerun()
 
 st.divider()
 
@@ -131,22 +170,75 @@ with st.container(border=True):
     if col3.button("📊 분석", type="primary", use_container_width=True):
         res, df = analyze_v5(t_input, d_input)
         if res:
+            # 로그 기록 복구
+            match = krx_df[krx_df['Code'] == t_input]
+            disp_name = match['Name'].values[0] if not match.empty else t_input
+            analysis_log = [l for l in analysis_log if l['code'] != t_input]
+            analysis_log.insert(0, {"name": disp_name, "code": t_input})
+            save_data(ANALYSIS_LOG_FILE, analysis_log[:20])
+
             st.markdown(f"### 🎯 종합 판정: :{res['color']}[{res['tag']}]")
             pc1, pc2, pc3 = st.columns(3)
             with pc1:
-                st.write("**[엔진 판독 결과]**")
-                st.write(f"기존엔진: {'🚀 매수' if res['is_orig_buy'] else '🟡 관망'}")
+                st.write("**[엔진 판독]**")
                 st.write(f"패턴 유사도: {res['similarity']:.1f}%")
             with pc2:
-                st.write("**[3분할 매수 지침]**")
+                st.write("**[3분할 지침]**")
                 st.write(f"단계: **{res['weight']}**")
-                st.write(f"방법: 3~5일간 눌림목 분할")
+                st.write(f"방법: {res['plan']}")
             with pc3:
-                st.write("**[종합 매매 전략]**")
-                st.write(f"목표: **+10% (20일 시한부)**")
-                st.write(f"손절: **20일 경과 시 즉시**")
-                st.write(f"최종 데드라인: {res['stop']:,}원")
+                st.write("**[매매 전략]**")
+                st.write(f"목표: +10% (20일 시한부)")
+                st.write(f"데드라인: {res['stop']:,}원")
 
             fig = go.Figure(data=[go.Candlestick(x=df.index, open=df['시가'], high=df['고가'], low=df['저가'], close=df['종가'], increasing_line_color='red', decreasing_line_color='blue')])
             fig.update_layout(height=450, xaxis_rangeslider_visible=False, template="plotly_dark")
             st.plotly_chart(fig, use_container_width=True)
+            
+            if st.button("🔥 실전 매수 리스트 등록", use_container_width=True):
+                mon_stocks.append({"name": disp_name, "code": t_input, "buy_price": res['curr'], "memo": f"{res['weight']} / {res['similarity']:.0f}%"})
+                save_data(MONITOR_FILE, mon_stocks); st.rerun()
+
+st.subheader("🕒 최근 분석 로그")
+if analysis_log:
+    cols = st.columns(5)
+    for i, log in enumerate(analysis_log[:15]):
+        with cols[i % 5]:
+            if st.button(f"{log['name']}\n({log['code']})", key=f"alog_{log['code']}_{i}", use_container_width=True):
+                st.session_state.auto_code = log['code']; st.rerun()
+
+st.divider()
+
+# --- [스캐너] 기능 완벽 복구 ---
+st.subheader("📡 고가속 종목 스캐너")
+sc1, sc2 = st.columns([1, 4])
+if sc1.button("🚀 스캔 시작 (Top 500)"):
+    if st.session_state.scan_status != "분석 중":
+        codes = krx_df.head(500)['Code'].tolist()
+        threading.Thread(target=background_scanner, args=(codes,)).start()
+        st.session_state.scan_status = "분석 중"
+with sc2:
+    if st.session_state.scan_status == "분석 중":
+        st.progress(st.session_state.scan_progress / 100)
+        st.caption(f"📊 {st.session_state.scan_status}")
+    elif st.session_state.scan_status == "완료":
+        st.success(f"✅ 스캔 완료! {len(st.session_state.scan_results)}개의 후보를 찾았습니다.")
+
+if st.session_state.scan_status == "완료" and st.session_state.scan_results:
+    tabs = st.tabs(["💎 S급 이상", "⚔️ B급 이상"])
+    with tabs[0]:
+        filtered = [r for r in st.session_state.scan_results if "S" in r['tag']]
+        if filtered:
+            cols = st.columns(5)
+            for idx, r in enumerate(filtered[:15]):
+                m = krx_df[krx_df['Code'] == r['code']]; n = m['Name'].values[0] if not m.empty else r['code']
+                if cols[idx%5].button(f"{n}\n({r['similarity']:.0f}%)", key=f"sc_{r['code']}"):
+                    st.session_state.auto_code = r['code']; st.rerun()
+    with tabs[1]:
+        filtered = [r for r in st.session_state.scan_results if "B" in r['tag']]
+        if filtered:
+            cols = st.columns(5)
+            for idx, r in enumerate(filtered[:15]):
+                m = krx_df[krx_df['Code'] == r['code']]; n = m['Name'].values[0] if not m.empty else r['code']
+                if cols[idx%5].button(f"{n}\n({r['similarity']:.0f}%)", key=f"scb_{r['code']}"):
+                    st.session_state.auto_code = r['code']; st.rerun()
