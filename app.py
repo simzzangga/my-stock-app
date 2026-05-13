@@ -46,8 +46,8 @@ if "auth" not in st.session_state: st.session_state.auth = False
 
 # --- [1단계] 보안 설정: 4자리 즉시 반응 (모바일 최적화) ---
 if not st.session_state.auth:
-    st.title("💰 Shim's 100M Project Portal")
-    st.info("비밀번호 4자리를 입력하면 자동으로 입장합니다.")
+    st.title("💰 Shim's MSM Portal v5.2")
+    st.info("1억 만들기 프로젝트_From 202605")
     pwd = st.text_input("Access Key (4 digits)", type="password", max_chars=4, key="entry_pwd")
     if len(pwd) == 4:
         if pwd == "1234":
