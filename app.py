@@ -26,7 +26,6 @@ def get_ticker_dict():
         df_krx = fdr.StockListing('KRX')
         code_to_name = dict(zip(df_krx['Code'].astype(str), df_krx['Name']))
         name_to_code = dict(zip(df_krx['Name'], df_krx['Code'].astype(str)))
-        # 거래대금 상위 종목 리스트 (스캔 속도 향상용)
         top_tickers = df_krx.sort_values(by='Amount', ascending=False)['Code'].head(500).tolist()
         return code_to_name, name_to_code, top_tickers
     except:
@@ -57,13 +56,11 @@ def add_search_log(log_text):
 
 # --- 3. 분석 엔진 (v3.3 & v4.0) ---
 def run_analysis(ticker, base_date, mode):
-    # 최근 1년간의 데이터 로드
     start_date = (base_date - datetime.timedelta(days=365)).strftime("%Y-%m-%d")
     end_date = base_date.strftime("%Y-%m-%d")
     df = get_robust_ohlcv(ticker, start_date, end_date)
     
     if df.empty or len(df) < 15: return None, "데이터 부족"
-    
     current_price = int(df['종가'].iloc[-1])
     
     if "v3.3" in mode:
@@ -71,7 +68,6 @@ def run_analysis(ticker, base_date, mode):
         if spikes.empty: return None, "패턴 없음"
         recent = spikes.tail(1)
         s_date = recent.index[0]
-        # 너무 오래된 기준봉(60일 이상)은 제외
         if (base_date - s_date.date()).days > 60: return None, "기준봉 노후화"
         
         s_close, s_open, s_vol = int(recent['종가'].iloc[0]), int(recent['시가'].iloc[0]), float(recent['거래량'].iloc[0])
@@ -110,33 +106,39 @@ st.set_page_config(page_title="Shim's MSM Dual Pro", layout="wide")
 if check_password():
     code_to_name, name_to_code, top_tickers = get_ticker_dict()
     
-    st.sidebar.title("⚙️ 설정")
-    app_mode = st.sidebar.radio("엔진 선택", ["v3.3 (수급 중심)", "v4.0 (타점 중심)"])
+    st.sidebar.title("⚙️ 시스템 설정")
+    app_mode = st.sidebar.radio("엔진 모드 선택", ["v3.3 (수급 중심)", "v4.0 (타점 중심)"])
     
     st.sidebar.markdown("---")
-    st.sidebar.subheader("🔍 종목명 → 코드")
+    st.sidebar.subheader("🔍 종목코드 조회")
     search_name = st.sidebar.text_input("종목명 입력")
     if search_name:
         f_code = name_to_code.get(search_name)
         if f_code: st.sidebar.success(f"코드: `{f_code}`")
-        else: st.sidebar.error("없음")
+        else: st.sidebar.error("검색 결과 없음")
 
     st.title(f"📊 Shim's MSM - {app_mode}")
 
-    # [A] 개별 분석
+    # [TOP] 개별 종목 분석 섹션
+    st.markdown("### 🔍 종목 정밀 분석")
     with st.container(border=True):
+        # 버튼 높이 정렬을 위해 empty label 대신 마진 조절
         c1, c2, c3 = st.columns([2, 2, 1.2])
-        input_ticker = c1.text_input("종목코드", value="265560")
-        analysis_date = c2.date_input("날짜", datetime.date.today())
-        st.markdown('<div style="margin-top: 28px;"></div>', unsafe_allow_html=True)
-        btn_run = c3.button("📊 분석 실행", use_container_width=True, type="primary")
+        with c1:
+            input_ticker = st.text_input("종목코드", value="265560", placeholder="6자리 입력")
+        with c2:
+            analysis_date = st.date_input("분석 기준일", datetime.date.today())
+        with c3:
+            # HTML 마진을 이용한 수직 정렬 최적화
+            st.markdown('<p style="margin-bottom: 28px;"></p>', unsafe_allow_html=True)
+            btn_run = st.button("📊 분석 실행", use_container_width=True, type="primary")
 
     if btn_run or input_ticker:
         name = code_to_name.get(input_ticker, "Unknown")
         res, status = run_analysis(input_ticker, analysis_date, app_mode)
         if res:
             add_search_log(f"{name} ({input_ticker})")
-            st.success(f"🎯 {name} - {status}")
+            st.success(f"🎯 {name} 분석 결과: {status}")
             m1, m2, m3, m4 = st.columns(4)
             m1.metric("현재가", f"{res['current_price']:,}원")
             m2.metric("목표가", f"{res['target']:,}원")
@@ -146,25 +148,35 @@ if check_password():
             else:
                 m3.metric("1차타점", f"{res['b1']:,}원")
                 st.table(pd.DataFrame({"항목": ["기준봉일", "2차타점", "3차타점", "손절가"], "내용": [res['spike_date'], f"{res['b2']:,}원", f"{res['b3']:,}원", f"{res['stop']:,}원"]}))
-        else: st.info(f"결과: {status}")
+        else: st.info(f"알림: {status}")
 
-    # [B] 고속 스캐너 (수정 핵심)
+    # [MID] 최근 조회 기록 섹션 (중간 위치)
+    st.markdown("---")
+    st.subheader("🕒 최근 조회 기록")
+    if "search_logs" in st.session_state and st.session_state["search_logs"]:
+        l_cols = st.columns(5)
+        for idx, log in enumerate(st.session_state["search_logs"]):
+            l_cols[idx % 5].button(log, key=f"log_{idx}", use_container_width=True)
+    else:
+        st.caption("최근 조회한 종목이 없습니다.")
+
+    # [BOTTOM] 시장 스캐너 섹션 (하단 위치)
     st.markdown("---")
     st.subheader("📡 실시간 매수 타점 스캐너")
-    st.caption("최근 20일 내 기준봉 형성 후 현재 눌림목 구간인 종목을 찾습니다. (거래대금 상위 500종목 대상)")
+    st.caption("최근 20일 내 기준봉(급등) 발생 후 현재 눌림목 구간인 우량주 스캔 (상위 500종목)")
     
-    if st.button("🚀 매수 타점 종목 스캔 시작", use_container_width=True):
+    if st.button("🚀 전체 시장 스캔 시작", use_container_width=True):
         found = []
         progress_text = st.empty()
         bar = st.progress(0)
         
         for i, t in enumerate(top_tickers):
             if i % 50 == 0:
-                progress_text.text(f"시장 분석 중... ({i}/{len(top_tickers)})")
+                progress_text.text(f"스캐닝 진행 중... ({i}/{len(top_tickers)})")
                 bar.progress(i / len(top_tickers))
             
             res_s, status_s = run_analysis(t, analysis_date, app_mode)
-            if res_s: # '매수' 신호가 있는 종목만 found에 추가됨 (run_analysis에서 필터링됨)
+            if res_s:
                 found.append({
                     "종목명": code_to_name.get(t, t),
                     "코드": t,
@@ -177,15 +189,7 @@ if check_password():
         progress_text.empty()
         
         if found:
-            st.success(f"🔥 매수 타점 포착! {len(found)}개 종목 발견")
+            st.success(f"🔥 매수 적기 종목 {len(found)}건 발견")
             st.dataframe(pd.DataFrame(found), use_container_width=True)
         else:
-            st.warning("현재 매수 구간에 진입한 우량 종목이 없습니다. 날짜를 변경하거나 나중에 다시 시도하세요.")
-
-    # [C] 최근 조회 기록
-    st.markdown("---")
-    st.subheader("🕒 최근 조회 기록")
-    if "search_logs" in st.session_state and st.session_state["search_logs"]:
-        l_cols = st.columns(5)
-        for idx, log in enumerate(st.session_state["search_logs"]):
-            l_cols[idx % 5].button(log, key=f"log_{idx}", use_container_width=True)
+            st.warning("현재 매수 구간에 진입한 대상 종목이 없습니다.")
