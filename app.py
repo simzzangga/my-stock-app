@@ -43,7 +43,7 @@ def save_data(file_path, data):
         with open(file_path, "w", encoding="utf-8") as f: json.dump(data, f, ensure_ascii=False, indent=4)
     except: pass
 
-# --- [2. 엔진: 동적 수익률 및 가변 비중 정밀 로직 (v5.9.66)] ---
+# --- [2. 엔진: 동적 수익률 및 이중 손절 정밀 로직 (v5.9.66)] ---
 def analyze_v5_engine(ticker, target_date):
     df = None
     try:
@@ -75,7 +75,6 @@ def analyze_v5_engine(ticker, target_date):
     cv = (pre_20['CLOSE'].std() / pre_20['CLOSE'].mean()) * 100
     similarity = ((max(0, 100 - (abs(cv - 1.8) * 20))) * 0.3) + ((min(100, (vol_ratio / 5.0) * 100)) * 0.7)
     
-    # [동적 수익률 수식: 승현님 지시 반영]
     raw_exp = (vol_ratio * 2.5) + (similarity * 0.1)
     phase, weight_now, exp_profit, color = "🟡 관망", 0, 0, "grey"
     
@@ -87,10 +86,13 @@ def analyze_v5_engine(ticker, target_date):
         phase, weight_now, exp_profit, color = "⚔️ 1차: 신규진입", 20, round(max(8.0, raw_exp * 0.8) - 2.0, 2), "green"
     
     target_price = int(curr['CLOSE'] * (1 + exp_profit/100))
+    stop_warning = int(curr['CLOSE'] * 0.97) # -3% 경고
+    stop_final = int(curr['CLOSE'] * 0.95)   # -5% 최종손절
     integrity = 100 if (df.index[-1].date() >= target_date - datetime.timedelta(days=3)) else 60
 
     return {
-        "code": ticker, "curr": int(curr['CLOSE']), "t_low": int(curr['LOW']), "stop": int(curr['LOW'] * 0.96),
+        "code": ticker, "curr": int(curr['CLOSE']), "t_low": int(curr['LOW']), 
+        "stop_final": stop_final, "stop_warning": stop_warning,
         "similarity": similarity, "tag": phase, "color": color, "vol_ratio": vol_ratio,
         "weight": weight_now, "exp_profit": exp_profit, "target_price": target_price,
         "integrity": integrity, "is_valid": True if weight_now > 0 else False
@@ -99,7 +101,6 @@ def analyze_v5_engine(ticker, target_date):
 # --- [3. UI 레이아웃 및 제어 센터] ---
 st.set_page_config(page_title="🔥 Phoenix Hybrid v5.9.66", layout="wide")
 
-# 관제 섹션 (백업 버튼 복구)
 c_head1, c_head2 = st.columns([6, 2])
 with c_head1:
     st.markdown(f"### 🔥 Phoenix Hybrid v5.9.66 | `{st.session_state.server_status}`")
@@ -110,14 +111,12 @@ with c_head2:
 krx_df = get_krx_list_ultimate()
 krx_df['Display'] = krx_df['Code'].astype(str) + " | " + krx_df['Name'].astype(str)
 
-# 사이드바 (날짜 고정 종목만 변경 로직 감사 완료)
 st.sidebar.title("📁 Phoenix History")
 analysis_log = load_data(ANALYSIS_LOG_FILE, [])
 for idx, log in enumerate(analysis_log[:40]):
     if st.sidebar.button(f"{log['name']} ({log['code']})", key=f"side_{idx}", width='stretch'):
         st.session_state.auto_code = log['code']; st.rerun()
 
-# 폼 구조 적용 (엔터키 연동 감사 완료)
 with st.form("main_analysis_form", clear_on_submit=False):
     c1, c2, c3 = st.columns([4, 1.5, 2])
     def_idx = None
@@ -143,25 +142,26 @@ if btn_click or (st.session_state.auto_code != ""):
 
         fig = go.Figure(data=[go.Candlestick(x=df.index.strftime('%y-%m-%d'), open=df['OPEN'], high=df['HIGH'], low=df['LOW'], close=df['CLOSE'], increasing_line_color='red', decreasing_line_color='blue')])
         fig.add_hline(y=res['target_price'], line_dash="dot", line_color="orange", annotation_text=f"목표가({res['exp_profit']}%)")
-        fig.add_hline(y=res['t_low'], line_dash="dash", line_color="green", annotation_text="지지선")
+        fig.add_hline(y=res['stop_warning'], line_dash="dot", line_color="yellow", annotation_text="1차경고(-3%)")
+        fig.add_hline(y=res['stop_final'], line_dash="solid", line_color="red", line_width=2, annotation_text="최종손절(-5%)")
         fig.update_layout(height=450, xaxis_rangeslider_visible=False, template="plotly_dark")
         st.plotly_chart(fig, use_container_width=True)
 
         with st.container(border=True):
-            st.markdown(f"### 📊 PM SHIM 전용: 단계별 동적 전략 리포트")
+            st.markdown(f"### 📊 PM SHIM 전용: 동적 전략 및 리스크 관리")
             col1, col2 = st.columns(2)
             with col1:
-                st.markdown(f"**[1. 시그널 비중]**\n* 오늘 진입: **{res['weight']}%**\n* 단계: `{res['tag']}`")
+                st.markdown(f"**[1. 시그널 비중]**\n* 오늘 진입: **{res['weight']}%**\n* 단계: `{res['tag']}`\n* 전략: 1차(20%)→2차(30%)→3차(50%)")
             with col2:
-                st.markdown(f"**[2. 수익 시뮬레이션]**\n* 기댓값: `{res['exp_profit']}%` (2% 선차감)\n* 목표가: `{res['target_price']:,}원`")
+                st.markdown(f"**[2. 수익/손절 가이드]**\n* **목표가**: `{res['target_price']:,}원` ({res['exp_profit']}%)\n* **1차 경고**: `{res['stop_warning']:,}원` (-3%)\n* **최종 손절**: `{res['stop_final']:,}원` (-5%)")
             st.markdown("---")
-            st.markdown(f"**Insight**: 수급 {res['vol_ratio']:.2f}배 기반 산출 결과. {res['stop']:,}원 이탈 전까지 유효.")
+            st.markdown(f"**Risk Insight**: `{res['stop_final']:,}원` 이탈 시 시나리오는 즉시 종료됩니다. 복리를 위해 손절은 기계적으로 집행하십시오.")
 
 st.divider()
 if st.button("🚀 실시간 500개 종목 정밀 스캔 시작", width='stretch'):
     st.session_state.scan_storage = []
     codes = krx_df.head(500)['Code'].tolist()
-    prog_bar = st.progress(0); start_time = time.time()
+    prog_bar = st.progress(0)
     for i, code in enumerate(codes):
         r, _ = analyze_v5_engine(code, datetime.date.today())
         if r and r['is_valid']: st.session_state.scan_storage.append(r)
