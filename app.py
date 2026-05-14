@@ -9,60 +9,7 @@ import os
 import plotly.graph_objects as go
 import time
 
-# --- [0. 이미지 및 테마 설정] ---
-BACKGROUND_URL = "https://github.com/simzzangga/my-stock-app/blob/main/Gemini_Generated_Image_b76ay1b76ay1b76a.png?raw=true"
-
-def apply_custom_design():
-    st.markdown(f"""
-        <style>
-        .stApp {{
-            background: linear-gradient(rgba(0, 0, 0, 0.4), rgba(0, 0, 0, 0.4)), url("{BACKGROUND_URL}");
-            background-size: cover;
-            background-attachment: fixed;
-            background-position: center;
-        }}
-        h1, h2, h3, p, span, label {{
-            color: #ffffff !important;
-            text-shadow: 1px 1px 2px #000, 0 0 10px #00d4ff;
-        }}
-        .main-title {{
-            font-size: 3rem !important;
-            font-weight: 800 !important;
-            text-align: center;
-            color: #00d4ff !important;
-            text-transform: uppercase;
-            letter-spacing: 5px;
-            margin-bottom: 20px;
-            text-shadow: 2px 2px 10px #000, 0 0 20px #00d4ff;
-        }}
-        [data-testid="stSidebar"] {{
-            background-color: rgba(0, 0, 0, 0.7) !important;
-            backdrop-filter: blur(10px);
-            border-right: 1px solid #00d4ff;
-        }}
-        [data-testid="stDataFrame"] {{
-            background-color: rgba(255, 255, 255, 0.95) !important;
-            border-radius: 10px;
-            padding: 10px;
-        }}
-        .stButton>button {{
-            background: linear-gradient(45deg, #005f73, #0a9396) !important;
-            color: white !important;
-            border: 1px solid #94d2bd !important;
-            border-radius: 5px !important;
-            font-weight: bold !important;
-            transition: all 0.3s;
-        }}
-        .stButton>button:hover {{ box-shadow: 0 0 15px #00d4ff !important; transform: scale(1.02); }}
-        [data-testid="stForm"] {{
-            background-color: rgba(0, 0, 0, 0.6) !important;
-            border: 1px solid #00d4ff !important;
-            border-radius: 15px !important;
-        }}
-        </style>
-        """, unsafe_allow_html=True)
-
-# --- [1. 시스템 설정] ---
+# --- [1. 시스템 설정 및 영속성 함수] ---
 SCAN_RESULT_FILE = "last_scan_results.json"
 ANALYSIS_LOG_FILE, BACKUP_KRX_FILE = "analysis_log_v5.json", "backup_krx.json"
 
@@ -75,7 +22,7 @@ if "scan_storage" not in st.session_state:
     else: st.session_state.scan_storage = []
 
 if "auto_code" not in st.session_state: st.session_state.auto_code = ""
-if "server_status" not in st.session_state: st.session_state.server_status = "🛰️ 엔진 점화 중..."
+if "server_status" not in st.session_state: st.session_state.server_status = "🛰️ 엔진 예열 중..."
 
 def load_data(file_path, default_val):
     try:
@@ -95,16 +42,17 @@ def get_krx_list_ultimate():
         try:
             df_l = pd.read_json(BACKUP_KRX_FILE)
             if not df_l.empty:
-                st.session_state.server_status = "🔥 출격 준비 완료 (LOCAL FAST)"
+                st.session_state.server_status = "🔥 출격 준비 완료 (connected)"
                 return df_l
         except: pass
     try:
         df = fdr.StockListing('KRX')[['Code', 'Name']]
         df['Code'] = df['Code'].astype(str).str.zfill(6)
         df.to_json(BACKUP_KRX_FILE)
-        st.session_state.server_status = "🔥 출격 준비 완료 (SERVER LIVE)"
+        st.session_state.server_status = "🔥 출격 준비 완료 (connected)"
         return df
     except:
+        st.session_state.server_status = "⚠️ 긴급 복구 모드 가동"
         return pd.DataFrame([{"Code": "005930", "Name": "삼성전자"}])
 
 # --- [2. 엔진: v5.9.73 적합도 정밀 연산] ---
@@ -165,28 +113,23 @@ def analyze_v5_engine(ticker, target_date):
     }, df
 
 # --- [3. UI 레이아웃] ---
-st.set_page_config(page_title="🔥 Phoenix Hybrid v5.9.73", layout="wide")
-apply_custom_design()
+st.set_page_config(page_title="Phoenix Hybrid v5.9.73", layout="wide")
 
-st.markdown('<div class="main-title">Phoenix Hybrid v5.9.73</div>', unsafe_allow_html=True)
+# (중요) 기존 스타일을 덮어쓰기 위해 강제 CSS 초기화
+st.markdown("<style>div.stApp {background: white !important;} h1, h2, h3, p, span {text-shadow: none !important; color: black !important;}</style>", unsafe_allow_html=True)
+
+st.title("Phoenix Hybrid v5.9.73")
 krx_df = get_krx_list_ultimate()
 krx_df['Display'] = krx_df['Code'] + " | " + krx_df['Name']
 
+# 요청하신 STATUS 형식
+st.subheader(f"STATUS: {st.session_state.server_status}")
+
 c_head1, c_head2 = st.columns([6, 2])
-with c_head1: st.markdown(f"### 🛰️ STATUS: `{st.session_state.server_status}`")
 with c_head2:
     if st.button("🔄 리스트 강제 동기화", use_container_width=True):
         if os.path.exists(BACKUP_KRX_FILE): os.remove(BACKUP_KRX_FILE)
         st.cache_data.clear(); st.rerun()
-
-# [메인 가이드라인 표]
-with st.expander("💡 2023-2025 백테스팅 기반 [Target Range] 및 우선순위 기준", expanded=True):
-    guide_data = {
-        "항목": ["유사도 (Similarity)", "거래량비 (vol_ratio)", "변동계수 (CV)", "몸통 비율 (Body Ratio)"],
-        "Target Range": ["82.5 ~ 88.0", "2.8 ~ 4.2", "1.5 ~ 2.2", "0.65 ~ 0.85"],
-        "우선순위 (Color)": ["1순위: 적합도 90%↑ (Gold)", "2순위: 적합도 70%↑ (Blue)", "3순위: 기타 (Gray)", "---"]
-    }
-    st.table(guide_data)
 
 st.sidebar.title("📂 Phoenix History")
 analysis_log = load_data(ANALYSIS_LOG_FILE, [])
@@ -200,9 +143,9 @@ with st.form("main_analysis_form", clear_on_submit=False):
     if st.session_state.auto_code:
         matches = [i for i, x in enumerate(krx_df['Code']) if x == str(st.session_state.auto_code).zfill(6)]
         if matches: def_idx = matches[0]
-    search_input = c1.selectbox("타겟 종목 포착", krx_df['Display'].tolist(), index=def_idx)
+    search_input = c1.selectbox("종목 선택", krx_df['Display'].tolist(), index=def_idx)
     c2.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
-    btn_click = c2.form_submit_button("🔍 정밀 스캔 시작", type="primary", use_container_width=True)
+    btn_click = c2.form_submit_button("🔍 정밀 분석 시작", type="primary", use_container_width=True)
     d_input = c3.date_input("기준 날짜", value=datetime.date.today())
 
 if btn_click or (st.session_state.auto_code != ""):
@@ -210,14 +153,14 @@ if btn_click or (st.session_state.auto_code != ""):
     res, df = analyze_v5_engine(target_code, d_input)
     if res:
         disp_name = krx_df[krx_df['Code'] == res['종목코드']]['Name'].values[0]
-        st.markdown(f"## 🎯 [{disp_name}] 전략 리포트 가동")
+        st.markdown(f"### 🎯 [{disp_name}] 전략 리포트")
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("전투 상태", res['상태'])
         m2.metric("예상 수익률", res['예상수익'], delta=f"적합도 {res['적합도']}%")
-        m3.metric("목표 타격가", f"{res['목표가']:,}원")
-        m4.metric("최종 손절선", f"{res['손절가']:,}원", delta="-5%")
-        fig = go.Figure(data=[go.Candlestick(x=df.index.strftime('%y-%m-%d'), open=df['OPEN'], high=df['HIGH'], low=df['LOW'], close=df['CLOSE'], increasing_line_color='#00d4ff', decreasing_line_color='#ff4b4b')])
-        fig.update_layout(height=400, template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+        m3.metric("목표가", f"{res['목표가']:,}원")
+        m4.metric("손절가", f"{res['손절가']:,}원")
+        fig = go.Figure(data=[go.Candlestick(x=df.index.strftime('%y-%m-%d'), open=df['OPEN'], high=df['HIGH'], low=df['LOW'], close=df['CLOSE'])])
+        fig.update_layout(height=400, template="plotly_white")
         st.plotly_chart(fig, use_container_width=True)
 
 st.divider()
@@ -226,29 +169,52 @@ st.divider()
 if st.button("🚀 1,000개 종목 광역 정밀 스캔 시작", width='stretch'):
     st.session_state.scan_storage = []
     codes = krx_df.head(1000)
+    
     prog_bar = st.progress(0)
+    status_text = st.empty()
+    time_text = st.empty()
+    start_time = time.time()
+    
     for i, (idx, row) in enumerate(codes.iterrows()):
+        elapsed = time.time() - start_time
+        avg_time = elapsed / (i + 1)
+        rem_time = avg_time * (1000 - (i + 1))
+        
+        # [실시간 추적 표시 복구]
+        status_text.text(f"📡 스캔 중인 종목: {row['Name']} ({i+1}/1000)")
+        time_text.text(f"⏱️ 남은 시간: {int(rem_time//60)}분 {int(rem_time%60)}초")
+        
         r, _ = analyze_v5_engine(row['Code'], datetime.date.today())
         if r and r['is_valid']:
             r['종목명'] = f"[{r['스캔날짜']}] {row['Name']}"
             st.session_state.scan_storage.append(r)
         prog_bar.progress((i + 1) / 1000)
+    
+    status_text.success("🎯 전 종목 스캔 완료")
     save_data(SCAN_RESULT_FILE, st.session_state.scan_storage)
     st.rerun()
 
 if st.session_state.scan_storage:
-    st.markdown("### 📋 스캔 결과 리스트 (통계적 적합도 순 정렬)")
+    st.markdown("### 📋 스캔 결과 리스트")
     scan_df = pd.DataFrame(st.session_state.scan_storage)
     scan_df['exp_val'] = scan_df['예상수익'].str.replace('%', '').astype(float)
     scan_df = scan_df.sort_values(by=['적합도', 'exp_val'], ascending=[False, False]).drop(columns=['exp_val'])
     
-    # [지휘관 오더] 셀 배경색 조건부 서식 함수
     def color_priority(val):
-        if val >= 90: return 'background-color: #ffd700; color: black; font-weight: bold' # 1순위 Gold
-        elif val >= 70: return 'background-color: #00d4ff; color: black' # 2순위 Blue
-        return 'background-color: #d3d3d3; color: black' # 3순위 Gray
+        if val >= 90: return 'background-color: #fff3cd; color: black; font-weight: bold'
+        elif val >= 70: return 'background-color: #d1ecf1; color: black'
+        return ''
 
     styled_df = scan_df.style.applymap(color_priority, subset=['적합도'])
-    
     cols = ['종목명', '종목코드', '적합도', '상태', '비중', '현재가', '목표가', '손절가', '예상수익', '유사도', '거래량비', 'CV', '몸통비율']
     st.dataframe(styled_df, use_container_width=True, hide_index=True, column_order=cols)
+
+# [가이드라인 최하단 배치]
+st.divider()
+with st.expander("💡 2023-2025 백테스팅 기반 우선순위 기준", expanded=False):
+    guide_data = {
+        "항목": ["유사도 (Similarity)", "거래량비 (vol_ratio)", "변동계수 (CV)", "몸통 비율 (Body Ratio)"],
+        "Target Range": ["82.5 ~ 88.0", "2.8 ~ 4.2", "1.5 ~ 2.2", "0.65 ~ 0.85"],
+        "우선순위": ["1순위: 적합도 90%↑", "2순위: 적합도 70%↑", "3순위: 기타"]
+    }
+    st.table(guide_data)
