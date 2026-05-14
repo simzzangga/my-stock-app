@@ -48,9 +48,9 @@ def get_krx_list_ultimate():
     return pd.DataFrame([{"Code": "005930", "Name": "삼성전자"}])
 
 # --- [2. 앱 설정 및 로고 배치] ---
-st.set_page_config(page_title="🔥 Phoenix Hybrid v5.9.53", layout="wide")
+st.set_page_config(page_title="🔥 Phoenix Hybrid v5.9.54", layout="wide")
 
-st.markdown("<h1 style='text-align: center; color: #FF4B4B;'>🔥 Phoenix Hybrid v5.9.53</h1>", unsafe_allow_html=True)
+st.markdown("<h1 style='text-align: center; color: #FF4B4B;'>🔥 Phoenix Hybrid v5.9.54</h1>", unsafe_allow_html=True)
 st.markdown("<p style='text-align: center; color: #888;'>Premium Stock Analysis System for SHIM SEUNGHYUN</p>", unsafe_allow_html=True)
 
 krx_df = get_krx_list_ultimate()
@@ -146,37 +146,35 @@ with st.container(border=True):
             fig.update_layout(height=450, xaxis_rangeslider_visible=False, template="plotly_dark", margin=dict(l=10, r=10, t=10, b=10), dragmode=False)
             st.plotly_chart(fig, use_container_width=True, config={'staticPlot': True})
 
-            # --- [5. 심층 리포트 복구: A4 반 페이지 분량] ---
+            # --- [5. 심층 리포트 보존: 승현님 요청 사항] ---
             with st.container(border=True):
                 st.markdown("### 📋 Phoenix Deep Analysis Report")
                 col_a, col_b = st.columns(2)
                 with col_a:
                     st.markdown(f"""
                     **1. 수급 및 캔들 정밀 분석**
-                    * **거래량 폭발 지수**: {res['vol_ratio']:.2f}배 (20일 평균 대비)
-                    * **캔들 장악력(Body)**: {res['body']:.2%}: 현재 시가 대비 종가의 위치가 강력한 매수세를 증명합니다.
-                    * **판정 근거**: {'필승 패턴에 부합하는 수급이 포착되었습니다.' if res['is_orig_buy'] else '변동성이 수렴하며 에너지를 응축 중입니다.'}
+                    * **거래량 강도**: {res['vol_ratio']:.2f}배 (과거 매집봉 대비 현황)
+                    * **캔들 몸통**: {res['body']:.2%} (에너지 응집력)
+                    * **특이사항**: {'필승 패턴에 부합하는 수급이 포착되었습니다.' if res['is_orig_buy'] else '변동성이 수렴하며 에너지를 응축 중입니다.'}
                     """)
                 with col_b:
                     st.markdown(f"""
                     **2. 변동성 및 가속도 분석**
-                    * **응축도 (CV)**: {res['cv']:.4f} (표준 범위: 1.8 내외)
+                    * **응축도 (CV)**: {res['cv']:.4f}
                     * **패턴 유사도**: {res['similarity']:.2f}%
-                    * **기술적 상태**: 20일 이동평균선과 현재가의 괴리가 좁혀진 상태에서 {res['tag']} 시그널이 발생했습니다.
+                    * **기술적 상태**: 현재 주가는 과거 급등 직전의 궤적과 {res['similarity']:.1f}% 일치하고 있습니다.
                     """)
                 st.markdown("---")
                 st.markdown(f"""
-                **3. PM을 위한 종합 전략 제언 (PM SHIM's Insight)**
-                * **현 구간 분석**: 현재 {disp_name}의 차트는 `{res['t_low']:,}원`을 핵심 지지선으로 설정하고 있습니다. CV 수치가 `{res['cv']:.4f}`로 나타나는 것은 세력의 매집이 { '완료 단계' if res['cv'] < 2.0 else '진행 중' }임을 시사합니다.
-                * **대응 가이드**: 유사도 `{res['similarity']:.2f}%`는 과거 급등 직전의 패턴과 상당히 높은 일치율을 보입니다. 기준점인 `{res['t_low']:,}원`을 지지하는 한 강력한 홀딩 구간입니다.
-                * **리스크 관리**: 만약 주가가 `{res['stop']:,}원`을 이탈할 경우, 패턴 훼손으로 간주하고 비중 축소가 필요합니다.
-                * **최종 의견**: 본 종목은 현재 **{res['tag']}** 등급으로 분류되며, 상방 가속도가 붙기 시작한 유효 구간입니다.
+                **3. PM SHIM's 종합 전략 제언**
+                * **현 구간 분석**: `{disp_name}`의 현재 위치는 `{res['t_low']:,}원`을 지지선으로 하는 강력한 변곡점입니다.
+                * **대응 가이드**: 유사도 `{res['similarity']:.2f}%`는 고무적인 수치이나, 엔진의 보수적 기준에 따라 **{res['tag']}** 등급으로 분류되었습니다. 
+                * **리스크 관리**: 손절가 `{res['stop']:,}원` 이탈 시 시나리오가 파기되므로 철저한 비중 조절이 필요합니다.
                 """)
 
 st.divider()
 st.subheader("🚀 Phoenix Scanner (전수 조사)")
 
-# [스캔 세션 보존 강화]
 if st.button("실시간 500개 종목 정밀 스캔 시작", width='stretch'):
     st.session_state.scan_storage = []
     codes = krx_df.head(500)['Code'].tolist()
@@ -195,9 +193,9 @@ if st.button("실시간 500개 종목 정밀 스캔 시작", width='stretch'):
         prog_bar.progress((i + 1) / 500)
     
     time_text.success(f"✅ 스캔 완료 (총 {len(st.session_state.scan_storage)}건 포착)")
-    st.rerun() # 결과 즉시 반영 및 저장
+    st.rerun()
 
-# [데이터 고립] 분석 중에도 사라지지 않는 스캔 결과창
+# [스캔 결과 고립 유지]
 if st.session_state.scan_storage:
-    st.info(f"📊 스캔 결과 ({len(st.session_state.scan_storage)}개 포착) - 새로운 스캔 전까지 보존됩니다.")
+    st.info(f"📊 스캔 결과 ({len(st.session_state.scan_storage)}개 포착) - 다른 작업 중에도 사라지지 않습니다.")
     st.dataframe(pd.DataFrame(st.session_state.scan_storage).sort_values(by='similarity', ascending=False), use_container_width=True)
