@@ -1,6 +1,6 @@
 import streamlit as st
 import FinanceDataReader as fdr
-import yfina nce as yf
+import yfinance as yf
 import pandas as pd
 import numpy as np
 import datetime
@@ -38,7 +38,7 @@ def get_krx_list_ultimate():
     return pd.DataFrame([{"Code": "005930", "Name": "삼성전자"}])
 
 # --- [2. 앱 초기화 및 세션 요새화] ---
-st.set_page_config(page_title="MSM Phoenix v5.9.44", layout="wide")
+st.set_page_config(page_title="MSM Phoenix v5.9.45", layout="wide")
 
 if "auth" not in st.session_state: st.session_state.auth = False
 if "auto_code" not in st.session_state: st.session_state.auto_code = ""
@@ -46,7 +46,7 @@ if "curr_source" not in st.session_state: st.session_state.curr_source = "연결
 if "scan_storage" not in st.session_state: st.session_state.scan_storage = []
 
 if not st.session_state.auth:
-    st.title("🔥 Phoenix Hybrid v5.9.44")
+    st.title("🔥 Phoenix Hybrid v5.9.45")
     pwd = st.text_input("Access Key", type="password", key="entry_pwd")
     if pwd == "1234": st.session_state.auth = True; st.rerun()
     st.stop()
@@ -73,14 +73,14 @@ def analyze_v5_engine(ticker, target_date):
                 df = df_yf.copy()
                 if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
                 df.columns = [c.upper() for c in df.columns]
-                # KeyError 방지를 위한 명시적 컬럼 선택
+                # 컬럼 강제 매칭
+                if 'ADJ CLOSE' in df.columns: df = df.rename(columns={'ADJ CLOSE': 'CLOSE'})
                 df = df[['OPEN', 'HIGH', 'LOW', 'CLOSE', 'VOLUME']]
                 st.session_state.curr_source = "yfinance (우회)"
         except: pass
 
     if df is None or df.empty or 'CLOSE' not in df.columns: return None, None
     
-    # [디테일] 엄격한 수치 (몸통 0.7 / 거래량 5배 / CV 1.8)
     df['BODY_RATIO'] = (df['CLOSE'] - df['OPEN']).abs() / (df['HIGH'] - df['LOW'] + 0.001)
     df['VOL_MA'] = df['VOLUME'].rolling(20).mean()
     curr = df.iloc[-1]
@@ -101,7 +101,7 @@ def analyze_v5_engine(ticker, target_date):
             "similarity": similarity, "is_orig_buy": is_orig_buy, "tag": tag, "color": color, 
             "is_valid": is_valid, "cv": cv, "vol_ratio": vol_ratio, "body": curr['BODY_RATIO']}, df
 
-# --- [4. UI: 로그 및 상단 배너] ---
+# --- [4. UI: 사이드바 로그 및 상단 정보] ---
 st.sidebar.title("🔥 Phoenix Log")
 analysis_log = load_data(ANALYSIS_LOG_FILE, [])
 for idx, log in enumerate(analysis_log[:40]):
@@ -125,7 +125,7 @@ with st.container(border=True):
         res, df = analyze_v5_engine(target_code, d_input)
         if res:
             disp_name = krx_df[krx_df['Code'] == target_code]['Name'].values[0] if target_code in krx_df['Code'].values else target_code
-            # 로그 업데이트
+            # 사이드바 로그 업데이트
             temp_log = [l for l in load_data(ANALYSIS_LOG_FILE, []) if l['code'] != target_code]
             temp_log.insert(0, {"name": disp_name, "code": target_code}); save_data(ANALYSIS_LOG_FILE, temp_log[:40])
             
