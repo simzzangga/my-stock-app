@@ -125,7 +125,7 @@ with st.container(border=True):
     c1, c2, c3 = st.columns([4, 1.5, 2])
     search_input = c1.selectbox("종목 선택", krx_df['Display'].tolist(), index=None, key="main_search")
     c2.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
-    btn_click = c2.button("🔍 엔진 가동", type="primary", width='stretch')
+    btn_click = c2.button("Start", type="primary", width='stretch')
     d_input = c3.date_input("기준일 선택", value=datetime.date.today())
 
     target_code = ""
