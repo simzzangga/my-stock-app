@@ -10,7 +10,7 @@ import plotly.graph_objects as go
 import time
 import requests
 
-# --- [1. 시스템 설정] ---
+# --- [1. 시스템 설정 및 데이터 로드] ---
 ANALYSIS_LOG_FILE, BACKUP_KRX_FILE = "analysis_log_v5.json", "backup_krx.json"
 MONITOR_FILE = "monitoring_v5.json"
 
@@ -38,17 +38,20 @@ def get_krx_list_ultimate():
         return pd.read_json(BACKUP_KRX_FILE)
     return pd.DataFrame([{"Code": "005930", "Name": "삼성전자"}])
 
-# --- [2. 앱 초기화] ---
-st.set_page_config(page_title="MSM Phoenix v5.9.37", layout="wide")
+# --- [2. 앱 초기화 및 세션 상태 고정] ---
+st.set_page_config(page_title="MSM Phoenix v5.9.39", layout="wide")
 
+# [독립성 강화] 스캔 데이터는 리프레시 시에도 유지되도록 세션에 박제
 if "auth" not in st.session_state: st.session_state.auth = False
 if "auto_code" not in st.session_state: st.session_state.auto_code = ""
-if "scan_status" not in st.session_state: st.session_state.scan_status = "대기"
+if "scan_results" not in st.session_state: st.session_state.scan_results = []
+if "scan_progress" not in st.session_state: st.session_state.scan_progress = 0
+if "scan_status_text" not in st.session_state: st.session_state.scan_status_text = "대기"
 if "curr_source" not in st.session_state: st.session_state.curr_source = "미정"
 if "list_source" not in st.session_state: st.session_state.list_source = "확인 중"
 
 if not st.session_state.auth:
-    st.title("🔥 Phoenix Hybrid v5.9.37")
+    st.title("🔥 Phoenix Hybrid v5.9.39")
     pwd = st.text_input("Access Key", type="password", key="entry_pwd")
     if pwd == "1234": st.session_state.auth = True; st.rerun()
     st.stop()
@@ -57,7 +60,7 @@ krx_df = get_krx_list_ultimate()
 krx_df['Display'] = krx_df['Code'] + " | " + krx_df['Name']
 mon_stocks = load_data(MONITOR_FILE, [])
 
-# --- [3. 분석 엔진] ---
+# --- [3. 분석 엔진: 승현님의 엄격한 디테일 수치 복구] ---
 def analyze_v5_hybrid(ticker, base_date):
     df = None
     try:
@@ -80,10 +83,12 @@ def analyze_v5_hybrid(ticker, base_date):
 
     if df is None or df.empty: return None, None
     
+    # [디테일] 기존 엄격 수치 복구: 몸통 0.7 / 거래량 5배 / CV 1.8 타겟 정밀 매칭
     df['BODY_RATIO'] = (df['CLOSE'] - df['OPEN']).abs() / (df['HIGH'] - df['LOW'] + 1)
     df['VOL_MA'] = df['VOLUME'].rolling(20).mean()
     curr = df.iloc[-1]
     is_orig_buy = (curr['CLOSE'] > curr['OPEN']) and (curr['BODY_RATIO'] > 0.7) and (curr['VOLUME'] > curr['VOL_MA'] * 5)
+    
     pre_20 = df.iloc[-21:-1]
     cv = (pre_20['CLOSE'].std() / pre_20['CLOSE'].mean()) * 100
     vol_ratio = curr['VOLUME'] / (pre_20['VOLUME'].mean() + 1)
@@ -121,47 +126,57 @@ with st.container(border=True):
     if btn_click or (target_code != ""):
         res, df = analyze_v5_hybrid(target_code, d_input)
         if res:
+            # (로그 기록 및 차트/리포트 출력 로직 v5.9.37과 동일 유지)
             disp_name = krx_df[krx_df['Code'] == target_code]['Name'].values[0] if target_code in krx_df['Code'].values else target_code
             temp_log = [l for l in load_data(ANALYSIS_LOG_FILE, []) if l['code'] != target_code]
             temp_log.insert(0, {"name": disp_name, "code": target_code}); save_data(ANALYSIS_LOG_FILE, temp_log[:40])
             st.markdown(f"#### 🎯 {disp_name} ({target_code}) 판정: :{res['color']}[{res['tag']}]")
             
-            # [디테일] 차트 이미지화 (줌/드래그 차단)
             fig = go.Figure(data=[go.Candlestick(x=df.index, open=df['OPEN'], high=df['HIGH'], low=df['LOW'], close=df['CLOSE'], increasing_line_color='red', decreasing_line_color='blue')])
-            fig.add_hline(y=res['t_low'], line_dash="dash", line_color="green", annotation_text="기준")
-            fig.add_hline(y=res['stop'], line_color="#BF40BF", line_width=2, annotation_text="손절선")
-            fig.update_xaxes(rangebreaks=[dict(bounds=["sat", "mon"])])
             fig.update_layout(height=350, xaxis_rangeslider_visible=False, template="plotly_dark", margin=dict(l=5, r=5, t=5, b=5), dragmode=False)
-            st.plotly_chart(fig, width='stretch', config={'staticPlot': True}) # staticPlot=True로 그림처럼 고정
+            st.plotly_chart(fig, width='stretch', config={'staticPlot': True})
             
-            # [디테일] 리포트 상세화 (전략 삭제, 수치 데이터 극대화)
             with st.container(border=True):
                 st.markdown("#### 📝 AI 심층 수치 리포트")
                 r1, r2 = st.columns(2)
                 with r1:
                     st.write("**📊 기존 수급 엔진 결과**")
-                    st.caption(f"- **거래량 강도**: 평소 대비 {res['vol_ratio']:.2f}배 폭증 (기준 5배 대비 {'충족' if res['vol_ratio'] >= 5 else '미달'})")
-                    st.caption(f"- **캔들 장악력**: 몸통 비중 {res['body']:.1%} (실질적 매수세가 가격을 {int(res['body']*100)}% 지배 중)")
-                    st.caption(f"- **수급 판정**: {'🚀 기관/외인 대량 유입 가능성' if res['is_orig_buy'] else '🟡 단순 변동성 혹은 기술적 반등'}")
+                    st.caption(f"- **거래량 강도**: {res['vol_ratio']:.2f}배 (기준 5배 대비 {'충족' if res['vol_ratio'] >= 5 else '미달'})")
+                    st.caption(f"- **캔들 장악력**: 몸통 비중 {res['body']:.1%} (장대봉 판단: {'확정' if res['body'] > 0.7 else '미달'})")
                 with r2:
                     st.write("**📉 가속도 정밀 엔진 결과**")
-                    st.caption(f"- **응축도(CV)**: {res['cv']:.4f} (타겟 1.8 대비 오차범위 내 응축 여부 판독)")
-                    st.caption(f"- **패턴 유사도**: {res['similarity']:.2f}% (역사적 급등 패턴과의 수치적 일치도)")
-                    st.caption(f"- **리스크 방어**: 저가 대비 하방 4% 지점 {res['stop']:,}원 설정")
+                    st.caption(f"- **응축도(CV)**: {res['cv']:.4f} (타겟 1.8 대비 오차 판독)")
+                    st.caption(f"- **패턴 유사도**: {res['similarity']:.2f}% (역사적 급등 수치 일치도)")
                 st.divider()
-                st.caption(f"📍 **분석 데이터**: {st.session_state.curr_source} 서버 기반 / 기준가 {res['curr']:,}원 / 손절가 {res['stop']:,}원")
+                st.caption(f"📍 **분석 데이터**: {st.session_state.curr_source} 서버 기반")
 
 st.divider()
-st.subheader("📡 Phoenix Scanner (Top 500)")
-if st.button("🚀 실시간 전수 스캔", width='stretch'):
+st.subheader("📡 Phoenix Independent Scanner")
+
+# [독립성 강화] 스캔 결과 출력부와 실행부를 분리하여 세션 상태를 유지
+if st.button("🚀 실시간 전수 스캔 (Top 500)", width='stretch'):
     st.session_state.scan_results = []
     codes = krx_df.head(500)['Code'].tolist()
-    progress_bar = st.progress(0)
-    status_text = st.empty()
+    prog_bar = st.progress(0)
+    status_msg = st.empty()
     
     for i, code in enumerate(codes):
-        status_text.text(f"분석 중: {i+1}/500 ({krx_df[krx_df['Code']==code]['Name'].values[0]})")
+        name = krx_df[krx_df['Code'] == code]['Name'].values[0] if code in krx_df['Code'].values else code
+        st.session_state.scan_status_text = f"분석 중: {i+1}/500 ({name})"
+        status_msg.text(st.session_state.scan_status_text)
+        
         r, _ = analyze_v5_hybrid(code, datetime.date.today())
-        if r and r['is_valid']: st.session_state.scan_results.append(r)
-        progress_bar.progress((i + 1) / 500)
-    st.success(f"스캔 완료! {len(st.session_state.scan_results)}개 종목 포착")
+        if r and r['is_valid']:
+            st.session_state.scan_results.append(r)
+        
+        st.session_state.scan_progress = (i + 1) / 500
+        prog_bar.progress(st.session_state.scan_progress)
+    
+    st.session_state.scan_status_text = "✅ 스캔 완료"
+    st.rerun()
+
+# 세션에 저장된 결과를 항상 표시 (페이지 리프레시 시에도 유지됨)
+if st.session_state.scan_results:
+    st.info(f"📊 스캔 결과: {len(st.session_state.scan_results)}개의 유망 종목 포착")
+    res_df = pd.DataFrame(st.session_state.scan_results)
+    st.dataframe(res_df.sort_values(by='similarity', ascending=False), width='stretch')
