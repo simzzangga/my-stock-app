@@ -9,16 +9,28 @@ import os
 import plotly.graph_objects as go
 import time
 
-# --- [1. 초경량 시스템 설정] ---
+# --- [1. 초경량 시스템 설정 및 함수 복구] ---
 if "scan_storage" not in st.session_state: st.session_state.scan_storage = []
 if "auto_code" not in st.session_state: st.session_state.auto_code = ""
 if "server_status" not in st.session_state: st.session_state.server_status = "🛰️ 엔진 예열 중"
 
 ANALYSIS_LOG_FILE, BACKUP_KRX_FILE = "analysis_log_v5.json", "backup_krx.json"
 
-@st.cache_data(ttl=3600) # 1시간 동안 리스트 고정 (속도 최우선)
+# [복구 완료] 로그 저장/로드 함수
+def load_data(file_path, default_val):
+    try:
+        if os.path.exists(file_path):
+            with open(file_path, "r", encoding="utf-8") as f: return json.load(f)
+    except: pass
+    return default_val
+
+def save_data(file_path, data):
+    try:
+        with open(file_path, "w", encoding="utf-8") as f: json.dump(data, f, ensure_ascii=False, indent=4)
+    except: pass
+
+@st.cache_data(ttl=3600)
 def get_krx_list_ultimate():
-    # 백업이 있으면 서버 호출 없이 즉시 로드 (0.1초)
     if os.path.exists(BACKUP_KRX_FILE):
         try:
             df_l = pd.read_json(BACKUP_KRX_FILE)
@@ -26,9 +38,7 @@ def get_krx_list_ultimate():
                 st.session_state.server_status = "⚡ 초고속 로컬 모드 가동"
                 return df_l
         except: pass
-    
     try:
-        # 서버 호출 시에도 필요한 컬럼(코드, 이름)만 추출하여 경량화
         df = fdr.StockListing('KRX')[['Code', 'Name']]
         df['Code'] = df['Code'].astype(str).str.zfill(6)
         df.to_json(BACKUP_KRX_FILE)
@@ -41,9 +51,6 @@ def get_krx_list_ultimate():
 def analyze_v5_engine(ticker, target_date):
     df = None
     ticker_str = str(ticker).zfill(6)
-    
-    # [지휘관 오더 반영] 분석에 최적화된 범위(약 160일~최대 5년)만 정밀 타격
-    # 기본 분석 범위는 패턴 인식을 위해 160거래일(약 8개월)로 설정
     start_date = target_date - datetime.timedelta(days=240) 
     
     try:
@@ -111,10 +118,9 @@ with c_head2:
 krx_df = get_krx_list_ultimate()
 krx_df['Display'] = krx_df['Code'] + " | " + krx_df['Name']
 
-# [최적화] 사이드바 로그 로드 속도 향상
 st.sidebar.title("📁 Phoenix History")
 analysis_log = load_data(ANALYSIS_LOG_FILE, [])
-for idx, log in enumerate(analysis_log[:20]): # 20개만 표시하여 로딩 속도 확보
+for idx, log in enumerate(analysis_log[:20]): 
     if st.sidebar.button(f"{log['name']} ({log['code']})", key=f"side_{idx}", width='stretch'):
         st.session_state.auto_code = log['code']; st.rerun()
 
