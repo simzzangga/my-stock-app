@@ -8,8 +8,9 @@ import os
 import plotly.graph_objects as go
 import time
 import threading
+from streamlit.runtime.scriptrunner import add_script_run_ctx # 컨텍스트 동기화 도구
 
-# --- [시스템] 데이터 저장/로드 ---
+# --- [시스템] 데이터 저장/로드 (동일 유지) ---
 LOG_FILE = "trade_v5_log.json"
 MONITOR_FILE = "monitoring_v5.json"
 SCAN_FILE = "scan_results_v5.json"
@@ -42,7 +43,7 @@ krx_df = get_krx_list()
 
 ST_PARAMS = {"target_cv": 1.8, "target_vol": 10.0}
 
-st.set_page_config(page_title="MSM AI Dual-Engine v5.9.16", layout="wide")
+st.set_page_config(page_title="MSM AI Dual-Engine v5.9.17", layout="wide")
 
 if "auth" not in st.session_state: st.session_state.auth = False
 if "auto_code" not in st.session_state: st.session_state.auto_code = ""
@@ -53,7 +54,7 @@ if "scan_etc" not in st.session_state: st.session_state.scan_etc = ""
 
 # --- 보안 설정 ---
 if not st.session_state.auth:
-    st.title("💰 MSM Portal v5.9.16")
+    st.title("💰 MSM Portal v5.9.17")
     pwd = st.text_input("Access Key", type="password", max_chars=4, key="entry_pwd")
     if pwd == "1234": st.session_state.auth = True; st.rerun()
     st.stop()
@@ -121,14 +122,14 @@ def analyze_v5(ticker, base_date):
                 "cv": cv, "vol_ratio": vol_ratio, "body": curr['BODY_RATIO']}, df
     except: return None, None
 
-# [스캐너 긴급 수정] 진행상황 및 ETC 정상화
+# [스캐너 긴급 수리] missing ScriptRunContext 완벽 해결
 def background_scanner(codes):
     results = []
     total = len(codes)
     start_t = time.time()
     for i, c in enumerate(codes):
         try:
-            # 실시간 세션 업데이트 강제 수행
+            # 실시간 세션 업데이트
             st.session_state.scan_progress = int(((i+1)/total)*100)
             elapsed = time.time() - start_t
             avg = elapsed / (i+1)
@@ -139,13 +140,13 @@ def background_scanner(codes):
             
             r, _ = analyze_v5(c, datetime.date.today())
             if r and r['is_valid']: results.append(r)
-            time.sleep(0.3)
+            time.sleep(0.1) # 속도 개선
         except: continue
     st.session_state.scan_results = sorted(results, key=lambda x: x['similarity'], reverse=True)
     st.session_state.scan_status = "완료"
 
 # --- 메인 화면 ---
-st.title("🖥️ MSM AI Dual-Engine v5.9.16")
+st.title("🖥️ MSM AI Dual-Engine v5.9.17")
 
 if mon_stocks:
     for idx, s in enumerate(mon_stocks):
@@ -193,11 +194,8 @@ with st.container(border=True):
                 x=df.index, open=df['시가'], high=df['고가'], low=df['저가'], close=df['종가'],
                 increasing_line_color='red', decreasing_line_color='blue'
             )])
-            # 기준선(녹색) 및 손절선(보라색) 복구
             fig.add_hline(y=res['t_low'], line_dash="dash", line_color="green", annotation_text="기준")
             fig.add_hline(y=res['stop'], line_color="#BF40BF", annotation_text="손절", line_width=2)
-            
-            # 휴일 공백 제거 (HTS 스타일)
             fig.update_xaxes(rangebreaks=[dict(bounds=["sat", "mon"])])
             fig.update_layout(height=450, xaxis_rangeslider_visible=False, template="plotly_dark", margin=dict(l=10, r=10, t=10, b=10))
             st.plotly_chart(fig, use_container_width=True)
@@ -235,8 +233,11 @@ sc1, sc2 = st.columns([1, 4])
 if sc1.button("🚀 스캔 시작 (Top 500)"):
     if st.session_state.scan_status != "분석 중":
         codes = krx_df.head(500)['Code'].tolist()
-        st.session_state.scan_status = "분석 중" # 상태 먼저 변경
-        threading.Thread(target=background_scanner, args=(codes,)).start()
+        st.session_state.scan_status = "분석 중"
+        # [핵심] 스레드 생성 시 현재 Streamlit 컨텍스트를 주입
+        thread = threading.Thread(target=background_scanner, args=(codes,))
+        add_script_run_ctx(thread) # 이 코드가 에러를 해결합니다
+        thread.start()
         
 with sc2:
     if st.session_state.scan_status == "분석 중":
@@ -254,4 +255,12 @@ if st.session_state.scan_status == "완료" and st.session_state.scan_results:
             for idx, r in enumerate(filtered[:15]):
                 m = krx_df[krx_df['Code'] == r['code']]; n = m['Name'].values[0] if not m.empty else r['code']
                 if cols[idx%5].button(f"{n}\n({r['similarity']:.0f}%)", key=f"sc_{r['code']}"):
+                    st.session_state.auto_code = r['code']; st.rerun()
+    with tabs[1]:
+        filtered = [r for r in st.session_state.scan_results if "B" in r['tag']]
+        if filtered:
+            cols = st.columns(5)
+            for idx, r in enumerate(filtered[:15]):
+                m = krx_df[krx_df['Code'] == r['code']]; n = m['Name'].values[0] if not m.empty else r['code']
+                if cols[idx%5].button(f"{n}\n({r['similarity']:.0f}%)", key=f"scb_{r['code']}"):
                     st.session_state.auto_code = r['code']; st.rerun()
