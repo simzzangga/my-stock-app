@@ -31,22 +31,28 @@ def save_data(file_path, data):
 
 @st.cache_data(ttl=300)
 def get_krx_list_ultimate():
+    # 검색 기능 수정을 위해 로컬 백업을 최우선으로 탐색하여 지연 제거
+    if os.path.exists(BACKUP_KRX_FILE):
+        try:
+            df_l = pd.read_json(BACKUP_KRX_FILE)
+            if not df_l.empty:
+                st.session_state.list_source = "✅ 백업 데이터 로드됨"
+                return df_l
+        except: pass
     try:
         df = fdr.StockListing('KRX')
         if df is not None and not df.empty:
             df[['Code', 'Name']].to_json(BACKUP_KRX_FILE)
-            st.session_state.list_source = "✅ 실시간 KRX"
+            st.session_state.list_source = "✅ 실시간 KRX 연결됨"
             return df[['Code', 'Name']]
     except: pass
-    if os.path.exists(BACKUP_KRX_FILE):
-        st.session_state.list_source = "⚠️ 백업 데이터 모드"
-        return pd.read_json(BACKUP_KRX_FILE)
     return pd.DataFrame([{"Code": "005930", "Name": "삼성전자"}])
 
 # --- [2. 앱 설정 및 로고 배치] ---
-st.set_page_config(page_title="🔥 Phoenix Hybrid v5.9.50", layout="wide")
+st.set_page_config(page_title="🔥 Phoenix Hybrid v5.9.52", layout="wide")
 
-st.markdown("<h1 style='text-align: center; color: #FF4B4B;'>🔥 Phoenix Hybrid v5.9.50</h1>", unsafe_allow_html=True)
+# [변경 1] 타이틀 명칭 변경
+st.markdown("<h1 style='text-align: center; color: #FF4B4B;'>🔥 Phoenix Hybrid v5.9.52</h1>", unsafe_allow_html=True)
 st.markdown("<p style='text-align: center; color: #888;'>Premium Stock Analysis System for SHIM SEUNGHYUN</p>", unsafe_allow_html=True)
 
 krx_df = get_krx_list_ultimate()
@@ -103,29 +109,24 @@ for idx, log in enumerate(analysis_log[:40]):
     if st.sidebar.button(f"{log['name']} ({log['code']})", key=f"side_{idx}", width='stretch'):
         st.session_state.auto_code = log['code']; st.rerun()
 
-# 상단 서버 관제 배너
 with st.container(border=True):
     b1, b2, b3 = st.columns([5, 3, 2])
     b1.markdown(f"🛰️ **종목 리스트**: {st.session_state.list_source}")
-    b2.markdown(f"📡 **현재 분석 서버**: {st.session_state.curr_source}")
-    if b3.button("💾 서버 재접속 및 백업", use_container_width=True, type="secondary"):
-        try:
-            st.cache_data.clear()
-            new_df = fdr.StockListing('KRX')
-            if new_df is not None and not new_df.empty:
-                new_df[['Code', 'Name']].to_json(BACKUP_KRX_FILE)
-                st.session_state.list_source = "✅ 실시간 KRX"
-                st.toast("✅ KRX 서버 연결 성공")
-            else: raise Exception
-        except:
-            st.toast("⚠️ 서버 재접속 실패")
+    b2.markdown(f"📡 **분석 서버**: {st.session_state.curr_source}")
+    # [변경 2] 버튼명 [백업]으로 변경
+    if b3.button("💾 백업", use_container_width=True, type="secondary"):
+        st.cache_data.clear()
         st.rerun()
 
 with st.container(border=True):
     c1, c2, c3 = st.columns([4, 1.5, 2])
-    search_input = c1.selectbox("종목 선택", krx_df['Display'].tolist(), index=None, key="main_search")
+    # [변경 5] 검색 기능 수정: 리스트가 비어있지 않도록 보장
+    options_list = krx_df['Display'].tolist() if not krx_df.empty else ["005930 | 삼성전자"]
+    search_input = c1.selectbox("종목 선택 (검색 가능)", options_list, index=None, key="main_search")
+    
     c2.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
-    btn_click = c2.button("Start", type="primary", width='stretch')
+    # [변경 3] 버튼명 [Start]로 변경
+    btn_click = c2.button("🔍 Start", type="primary", width='stretch')
     d_input = c3.date_input("기준일 선택", value=datetime.date.today())
 
     target_code = ""
@@ -138,6 +139,7 @@ with st.container(border=True):
             disp_name = krx_df[krx_df['Code'] == target_code]['Name'].values[0] if target_code in krx_df['Code'].values else target_code
             temp_log = [l for l in load_data(ANALYSIS_LOG_FILE, []) if l['code'] != target_code]
             temp_log.insert(0, {"name": disp_name, "code": target_code}); save_data(ANALYSIS_LOG_FILE, temp_log[:40])
+            st.session_state.auto_code = ""
             
             st.markdown(f"### 🎯 {disp_name} 판정 결과: :{res['color']}[{res['tag']}]")
             
@@ -152,47 +154,35 @@ with st.container(border=True):
                 st.markdown("### 📋 Phoenix Deep Analysis Report")
                 col_a, col_b = st.columns(2)
                 with col_a:
-                    st.markdown(f"""
-                    **1. 수급 및 캔들 정밀 분석**
-                    * **거래량 폭발 지수**: {res['vol_ratio']:.2f}배
-                    * **캔들 장악력(Body)**: {res['body']:.2%}
-                    """)
+                    st.markdown(f"**1. 수급 분석**: 거래량 {res['vol_ratio']:.2f}배 | 캔들 장악력 {res['body']:.2%}")
                 with col_b:
-                    st.markdown(f"""
-                    **2. 변동성 및 가속도 분석**
-                    * **응축도 (CV)**: {res['cv']:.4f}
-                    * **패턴 유사도**: {res['similarity']:.2f}%
-                    """)
-                st.markdown("---")
-                st.markdown(f"**3. PM을 위한 종합 전략 제언**: 현재 **{res['tag']}** 등급으로 분류되며, 기준점 `{res['t_low']:,}원` 훼손 시 리스크 관리가 필요합니다.")
+                    st.markdown(f"**2. 변동성 분석**: 응축도(CV) {res['cv']:.4f} | 패턴 유사도 {res['similarity']:.2f}%")
+                st.markdown(f"**3. PM 제언**: 현재 **{res['tag']}** 등급으로 판정됩니다.")
 
 st.divider()
 st.subheader("🚀 Phoenix Scanner (전수 조사)")
 
-# [수정] 예상 소요 시간 실시간 표시 기능 추가
 if st.button("실시간 500개 종목 정밀 스캔 시작", width='stretch'):
     st.session_state.scan_storage = []
     codes = krx_df.head(500)['Code'].tolist()
     prog_bar = st.progress(0)
-    time_text = st.empty() # 실시간 시간 표시용
+    time_text = st.empty()
     
     start_time = time.time()
     for i, code in enumerate(codes):
         r, _ = analyze_v5_engine(code, datetime.date.today())
         if r and r['is_valid']: st.session_state.scan_storage.append(r)
         
-        # 남은 시간 계산 로직
-        elapsed_time = time.time() - start_time
-        avg_time_per_stock = elapsed_time / (i + 1)
-        remaining_stocks = len(codes) - (i + 1)
-        remaining_time = avg_time_per_stock * remaining_stocks
-        
-        time_text.markdown(f"⏳ **분석 중**: {i+1}/500 | **남은 예상 시간**: 약 {int(remaining_time)}초")
+        # [v5.9.50 유지] 남은 시간 추측 기능
+        elapsed = time.time() - start_time
+        avg = elapsed / (i + 1)
+        remaining = avg * (len(codes) - (i + 1))
+        time_text.markdown(f"⏳ **분석 중**: {i+1}/500 | **남은 예상 시간**: 약 {int(remaining)}초")
         prog_bar.progress((i + 1) / 500)
     
-    time_text.success(f"✅ 스캔 완료 (총 소요 시간: {int(time.time() - start_time)}초)")
-    st.rerun()
+    time_text.success(f"✅ 스캔 완료 (총 {len(st.session_state.scan_storage)}건 포착)")
 
+# [변경 4] 스캔 결과 유지 로직: 세션 상태를 직접 출력하여 휘발 방지
 if st.session_state.scan_storage:
     st.info(f"📊 스캔 결과 ({len(st.session_state.scan_storage)}개 포착)")
     st.dataframe(pd.DataFrame(st.session_state.scan_storage).sort_values(by='similarity', ascending=False), use_container_width=True)
