@@ -9,7 +9,6 @@ import os
 import plotly.graph_objects as go
 
 # --- [1. 시스템 설정 및 데이터 초기화] ---
-# 승현님의 편의를 위해 auth 세션을 기본 True로 설정하여 비번창을 제거합니다.
 if "list_source" not in st.session_state: st.session_state.list_source = "🛰️ 서버 연결 중"
 if "curr_source" not in st.session_state: st.session_state.curr_source = "📡 대기 중"
 if "auto_code" not in st.session_state: st.session_state.auto_code = ""
@@ -44,11 +43,10 @@ def get_krx_list_ultimate():
     return pd.DataFrame([{"Code": "005930", "Name": "삼성전자"}])
 
 # --- [2. 앱 설정 및 로고 배치] ---
-st.set_page_config(page_title="🔥 Phoenix Hybrid v5.9.47", layout="wide")
+st.set_page_config(page_title="🔥 Phoenix Hybrid v5.9.48", layout="wide")
 
-# 멋진 로고와 메인 타이틀 (비밀번호 없이 즉시 노출)
-st.markdown("<h1 style='text-align: center; color: #FF4B4B;'>🔥 Phoenix Hybrid v5.9.47</h1>", unsafe_allow_html=True)
-st.markdown("<p style='text-align: center; color: #888;'>Premium Stock Analysis System for SHIM SEUNGHYUN</p>", unsafe_allow_html=True)
+st.markdown("<h1 style='text-align: center; color: #FF4B4B;'>🔥 Phoenix Hybrid v5.9.48</h1>", unsafe_allow_html=True)
+st.markdown("<p style='text-align: center; color: #888;'>Premium Genomic-based Stock Analysis System for PM SHIM</p>", unsafe_allow_html=True)
 
 krx_df = get_krx_list_ultimate()
 krx_df['Display'] = krx_df['Code'].astype(str) + " | " + krx_df['Name'].astype(str)
@@ -56,7 +54,6 @@ krx_df['Display'] = krx_df['Code'].astype(str) + " | " + krx_df['Name'].astype(s
 # --- [3. 엔진: 하이브리드 수집 및 정밀 분석] ---
 def analyze_v5_engine(ticker, target_date):
     df = None
-    # 1차 시도: KRX
     try:
         df = fdr.DataReader(ticker, target_date - datetime.timedelta(days=160), target_date)
         if df is not None and not df.empty:
@@ -65,7 +62,6 @@ def analyze_v5_engine(ticker, target_date):
             df = df.rename(columns={'시가':'OPEN','고가':'HIGH','저가':'LOW','종가':'CLOSE','거래량':'VOLUME'})
     except: pass
 
-    # 2차 시도: yfinance (강제 정렬 로직 보강)
     if df is None or df.empty or 'CLOSE' not in df.columns:
         try:
             yf_ticker = f"{ticker}.KS" if ticker.startswith('0') or ticker.startswith('1') else f"{ticker}.KQ"
@@ -73,14 +69,12 @@ def analyze_v5_engine(ticker, target_date):
             if not df_yf.empty:
                 if isinstance(df_yf.columns, pd.MultiIndex): df_yf.columns = df_yf.columns.get_level_values(0)
                 df_yf.columns = [c.upper() for c in df_yf.columns]
-                # 컬럼명 강제 통일 및 인덱스 정리
                 df = df_yf.rename(columns={'ADJ CLOSE': 'CLOSE'})[['OPEN', 'HIGH', 'LOW', 'CLOSE', 'VOLUME']]
                 st.session_state.curr_source = "yfinance (비상 우회)"
         except: pass
 
     if df is None or df.empty or 'CLOSE' not in df.columns: return None, None
     
-    # 분석 로직
     df['BODY_RATIO'] = (df['CLOSE'] - df['OPEN']).abs() / (df['HIGH'] - df['LOW'] + 0.001)
     df['VOL_MA'] = df['VOLUME'].rolling(20).mean()
     curr = df.iloc[-1]
@@ -113,8 +107,28 @@ st.info(f"🛰️ 리스트: {st.session_state.list_source} | 📡 서버: {st.s
 with st.container(border=True):
     c1, c2, c3 = st.columns([4, 1.5, 2])
     search_input = c1.selectbox("종목 선택", krx_df['Display'].tolist(), index=None, key="main_search")
+    
+    # --- [중앙 제어 버튼 섹션: 백업 기능 복구] ---
     c2.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
-    btn_click = c2.button("🔍 엔진 가동", type="primary", width='stretch')
+    # 버튼 배열을 위해 내부 컬럼 분할
+    sub_c1, sub_c2 = c2.columns(2)
+    btn_click = sub_c1.button("🔍 가동", type="primary", use_container_width=True)
+    
+    # [백업] 버튼: 서버 재시도 및 데이터 동기화 기능
+    if sub_c2.button("💾 백업", use_container_width=True):
+        try:
+            st.cache_data.clear() # 캐시 삭제 후 강제 재시도
+            new_df = fdr.StockListing('KRX')
+            if new_df is not None and not new_df.empty:
+                new_df[['Code', 'Name']].to_json(BACKUP_KRX_FILE)
+                st.success("✅ KRX 서버 연결 성공 및 백업 완료")
+                st.session_state.list_source = "✅ 실시간 KRX"
+            else: raise Exception
+        except:
+            st.warning("⚠️ 서버 불안정. 현재 리스트를 유지합니다.")
+        time_now = datetime.datetime.now().strftime('%H:%M:%S')
+        st.toast(f"데이터 백업 프로세스 실행 완료 ({time_now})")
+        
     d_input = c3.date_input("기준일 선택", value=datetime.date.today())
 
     target_code = ""
@@ -130,7 +144,6 @@ with st.container(border=True):
             
             st.markdown(f"### 🎯 {disp_name} 판정 결과: :{res['color']}[{res['tag']}]")
             
-            # 차트 (이미지 고정 및 가시성 최적화)
             fig = go.Figure(data=[go.Candlestick(x=df.index.strftime('%y-%m-%d'), open=df['OPEN'], high=df['HIGH'], low=df['LOW'], close=df['CLOSE'], increasing_line_color='red', decreasing_line_color='blue')])
             fig.add_hline(y=res['t_low'], line_dash="dash", line_color="green", annotation_text="기준점")
             fig.add_hline(y=res['stop'], line_color="#BF40BF", line_width=2, annotation_text="절대손절")
@@ -138,10 +151,8 @@ with st.container(border=True):
             fig.update_layout(height=450, xaxis_rangeslider_visible=False, template="plotly_dark", margin=dict(l=10, r=10, t=10, b=10), dragmode=False)
             st.plotly_chart(fig, use_container_width=True, config={'staticPlot': True})
 
-            # --- [5. 심층 AI 리포트 (PM 맞춤형 확장 버전)] ---
             with st.container(border=True):
                 st.markdown("### 📋 Phoenix Deep Analysis Report")
-                
                 col_a, col_b = st.columns(2)
                 with col_a:
                     st.markdown(f"""
@@ -150,7 +161,6 @@ with st.container(border=True):
                     * **캔들 장악력(Body)**: {res['body']:.2%}: 현재 주가는 시가 대비 강력한 매수세를 동반하며 몸통을 형성했습니다.
                     * **판정 근거**: {'기존 수급 엔진의 필승 패턴과 일치합니다.' if res['is_orig_buy'] else '변동성은 있으나 거래량 응축이 진행 중입니다.'}
                     """)
-                
                 with col_b:
                     st.markdown(f"""
                     **2. 변동성 및 가속도 분석**
@@ -158,7 +168,6 @@ with st.container(border=True):
                     * **패턴 유사도**: {res['similarity']:.2f}%
                     * **기술적 상태**: 현재 주가는 20일간의 가격 수렴 구간을 지나 가속도가 붙기 시작한 {res['tag']} 단계입니다.
                     """)
-                
                 st.markdown("---")
                 st.markdown(f"""
                 **3. PM을 위한 종합 전략 제언 (PM SHIM's Insight)**
