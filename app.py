@@ -26,10 +26,8 @@ def load_data(file_path, default_val):
 def save_data(file_path, data):
     with open(file_path, "w", encoding="utf-8") as f: json.dump(data, f, ensure_ascii=False, indent=4)
 
-# [디테일] KRX 장애 시 네이버 금융을 통해 리스트를 강제 확보하는 삼중 방어 로직
 @st.cache_data(ttl=600)
 def get_krx_list_ultimate():
-    # 시도 1: KRX 정식 서버
     try:
         df = fdr.StockListing('KRX')
         if df is not None and not df.empty:
@@ -39,29 +37,13 @@ def get_krx_list_ultimate():
             st.session_state.last_backup = datetime.datetime.now().strftime("%H:%M")
             return df_cleaned
     except: pass
-    
-    # 시도 2: 네이버 금융 실시간 크롤링 (KRX 장애 시 대안)
-    try:
-        url = "https://finance.naver.com/sise/sise_market_sum.naver?&page=1"
-        res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=5)
-        dfs = pd.read_html(res.text)
-        df_naver = dfs[1].dropna(subset=['종목명'])
-        if not df_naver.empty:
-            # 네이버는 코드를 텍스트가 아닌 링크에서 추출해야 하므로 간이 매핑 시도
-            # 실전성을 위해 기존 백업 파일이 있다면 그것을 우선하되, 시도 3으로 넘김
-            pass
-    except: pass
-
-    # 시도 3: 기존에 저장된 백업 파일
     if os.path.exists(BACKUP_KRX_FILE):
-        st.session_state.list_source = "⚠️ KRX 장애 (백업 리스트 사용)"
+        st.session_state.list_source = "⚠️ KRX 장애 (백업 리스트)"
         return pd.read_json(BACKUP_KRX_FILE)
-    
-    st.session_state.list_source = "🆘 서버 전면 장애 (비상 가동)"
-    return pd.DataFrame([{"Code": "005930", "Name": "삼성전자"}, {"Code": "000660", "Name": "SK하이닉스"}])
+    return pd.DataFrame([{"Code": "005930", "Name": "삼성전자"}])
 
 # --- [2. 앱 설정 및 세션 초기화] ---
-st.set_page_config(page_title="MSM Phoenix Hybrid v5.9.34", layout="wide")
+st.set_page_config(page_title="MSM Phoenix Hybrid v5.9.35", layout="wide")
 
 if "auth" not in st.session_state: st.session_state.auth = False
 if "auto_code" not in st.session_state: st.session_state.auto_code = ""
@@ -73,21 +55,28 @@ if "list_source" not in st.session_state: st.session_state.list_source = "확인
 if "last_backup" not in st.session_state: st.session_state.last_backup = "-"
 
 if not st.session_state.auth:
-    st.title("🔥 Phoenix Hybrid v5.9.34")
+    st.title("🔥 Phoenix Hybrid v5.9.35")
     pwd = st.text_input("Access Key", type="password", key="entry_pwd")
     if pwd == "1234": st.session_state.auth = True; st.rerun()
     st.stop()
 
 krx_df = get_krx_list_ultimate()
+# [디테일] 검색창 자동완성 편의를 위한 '코드 | 이름' 리스트
+krx_df['Display'] = krx_df['Code'] + " | " + krx_df['Name']
 mon_stocks = load_data(MONITOR_FILE, [])
 ST_PARAMS = {"target_cv": 1.8, "target_vol": 10.0}
 
-# --- [3. 엔진 및 분석 로직 (v5.9.33과 동일 - 수정 절대 없음)] ---
+# --- [3. 분석 엔진: 컬럼명 불일치 에러(KeyError) 완벽 방어] ---
 def analyze_v5_hybrid(ticker, base_date):
     df = None
     try:
         df = fdr.DataReader(ticker, base_date - datetime.timedelta(days=120), base_date)
-        if df is not None and not df.empty: st.session_state.curr_source = "KRX (정상)"
+        if df is not None and not df.empty:
+            st.session_state.curr_source = "KRX (정상)"
+            # [디테일] 어떤 언어로 들어오든 엔진용 영문 표준으로 강제 맵핑
+            df.columns = [c.upper() for c in df.columns]
+            rename_map = {'시가': 'OPEN', '고가': 'HIGH', '저가': 'LOW', '종가': 'CLOSE', '거래량': 'VOLUME'}
+            df = df.rename(columns=rename_map)
     except: pass
 
     if df is None or df.empty:
@@ -96,20 +85,20 @@ def analyze_v5_hybrid(ticker, base_date):
             df_yf = yf.download(yf_ticker, start=base_date - datetime.timedelta(days=120), end=base_date, progress=False)
             if not df_yf.empty:
                 df = df_yf[['Open', 'High', 'Low', 'Close', 'Volume']]
-                df.columns = ['시가', '고가', '저가', '종가', '거래량']
+                df.columns = ['OPEN', 'HIGH', 'LOW', 'CLOSE', 'VOLUME']
                 st.session_state.curr_source = "yfinance (우회)"
         except: pass
 
     if df is None or df.empty: return None, None
     
-    df.columns = [c.upper() for c in df.columns]
-    df['BODY_RATIO'] = (df['종가'] - df['시가']).abs() / (df['고가'] - df['저가'] + 1)
-    df['VOL_MA'] = df['거래량'].rolling(20).mean()
+    # 엔진 로직 (모두 영문 대문자 컬럼 사용)
+    df['BODY_RATIO'] = (df['CLOSE'] - df['OPEN']).abs() / (df['HIGH'] - df['LOW'] + 1)
+    df['VOL_MA'] = df['VOLUME'].rolling(20).mean()
     curr = df.iloc[-1]
-    is_orig_buy = (curr['종가'] > curr['시가']) and (curr['BODY_RATIO'] > 0.7) and (curr['거래량'] > curr['VOL_MA'] * 5)
+    is_orig_buy = (curr['CLOSE'] > curr['OPEN']) and (curr['BODY_RATIO'] > 0.7) and (curr['VOLUME'] > curr['VOL_MA'] * 5)
     pre_20 = df.iloc[-21:-1]
-    cv = (pre_20['종가'].std() / pre_20['종가'].mean()) * 100
-    vol_ratio = curr['거래량'] / (pre_20['거래량'].mean() + 1)
+    cv = (pre_20['CLOSE'].std() / pre_20['CLOSE'].mean()) * 100
+    vol_ratio = curr['VOLUME'] / (pre_20['VOLUME'].mean() + 1)
     similarity = ((max(0, 100 - (abs(cv - ST_PARAMS['target_cv']) * 25))) * 0.5) + ((min(100, (vol_ratio / ST_PARAMS['target_vol']) * 100)) * 0.5)
     
     if similarity >= 75:
@@ -117,7 +106,7 @@ def analyze_v5_hybrid(ticker, base_date):
         tag, color, is_valid = (f"💎 필승합의 ({step})", "red", True) if similarity >= 85 and is_orig_buy else (f"🚀 급등유력 ({step})", "red", True) if similarity >= 80 else (f"⚔️ 단기회전 ({step})", "green", True)
     else: tag, color, is_valid = "🟡 관망", "grey", False
     
-    return {"code": ticker, "curr": int(curr['종가']), "t_low": int(curr['저가']), "stop": int(curr['저가'] * 0.96), 
+    return {"code": ticker, "curr": int(curr['CLOSE']), "t_low": int(curr['LOW']), "stop": int(curr['LOW'] * 0.96), 
             "similarity": similarity, "is_orig_buy": is_orig_buy, "tag": tag, "color": color, 
             "is_valid": is_valid, "cv": cv, "vol_ratio": vol_ratio, "body": curr['BODY_RATIO']}, df
 
@@ -136,7 +125,7 @@ def run_stable_scanner(codes, current_date):
     st.session_state.scan_results = sorted(results, key=lambda x: x['similarity'], reverse=True)
     st.session_state.scan_status = "완료"
 
-# --- [4. UI 레이아웃 (v5.9.33과 동일 - 수정 절대 없음)] ---
+# --- [4. UI 레이아웃: 모든 디테일 통합] ---
 st.sidebar.title("🔥 Phoenix Log (Max 40)")
 analysis_log = load_data(ANALYSIS_LOG_FILE, [])
 for idx, log in enumerate(analysis_log[:40]):
@@ -144,23 +133,21 @@ for idx, log in enumerate(analysis_log[:40]):
         st.session_state.auto_code = log['code']; st.rerun()
 
 b1, b2 = st.columns([6, 1])
-with b1:
-    st.info(f"🛰️ 리스트: {st.session_state.list_source} ({st.session_state.last_backup}) | 📡 현재 시세 서버: {st.session_state.curr_source}")
+with b1: st.info(f"🛰️ 리스트: {st.session_state.list_source} ({st.session_state.last_backup}) | 📡 분석 서버: {st.session_state.curr_source}")
 with b2:
     if st.button("💾 외출전 백업", use_container_width=True):
-        get_krx_list_ultimate.clear()
-        get_krx_list_ultimate()
-        st.toast("모바일용 백업 완료!")
+        get_krx_list_ultimate.clear(); get_krx_list_ultimate(); st.toast("백업 완료!")
 
 with st.container(border=True):
     c1, c2, c3 = st.columns([4, 1.5, 2])
-    search_term = c1.selectbox("종목명 검색", krx_df['Name'].tolist(), index=None, placeholder="종목 선택 시 자동 초기화", key="main_search")
+    # [디테일] 검색창 리스트를 '코드 | 이름'으로 표시
+    search_input = c1.selectbox("종목 검색 (코드 또는 이름)", krx_df['Display'].tolist(), index=None, placeholder="코드 또는 이름 입력", key="main_search")
     c2.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
     btn_click = c2.button("🔍 분석 실행", type="primary", use_container_width=True)
     d_input = c3.date_input("분석 기준일", value=datetime.date.today())
 
     target_code = ""
-    if search_term: target_code = krx_df[krx_df['Name'] == search_term]['Code'].values[0]
+    if search_input: target_code = search_input.split(" | ")[0] # 코드 부분만 추출
     elif st.session_state.auto_code: target_code = st.session_state.auto_code
 
     if btn_click or (target_code != ""):
@@ -171,7 +158,7 @@ with st.container(border=True):
             temp_log.insert(0, {"name": disp_name, "code": target_code}); save_data(ANALYSIS_LOG_FILE, temp_log[:40])
             st.markdown(f"#### 🎯 {disp_name} ({target_code}) 판정: :{res['color']}[{res['tag']}]")
             pc1, pc2, pc3 = st.columns(3); pc1.metric("유사도", f"{res['similarity']:.1f}%"); pc2.metric("현재가", f"{res['curr']:,}원"); pc3.metric("🔥 마지노선", f"{res['stop']:,}원")
-            fig = go.Figure(data=[go.Candlestick(x=df.index, open=df['시가'], high=df['고가'], low=df['저가'], close=df['종가'], increasing_line_color='red', decreasing_line_color='blue')])
+            fig = go.Figure(data=[go.Candlestick(x=df.index, open=df['OPEN'], high=df['HIGH'], low=df['LOW'], close=df['CLOSE'], increasing_line_color='red', decreasing_line_color='blue')])
             fig.add_hline(y=res['t_low'], line_dash="dash", line_color="green", annotation_text="기준")
             fig.add_hline(y=res['stop'], line_color="#BF40BF", line_width=2, annotation_text="손절선")
             fig.update_xaxes(rangebreaks=[dict(bounds=["sat", "mon"])])
