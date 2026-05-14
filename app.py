@@ -13,6 +13,7 @@ import time
 SCAN_RESULT_FILE = "last_scan_results.json"
 ANALYSIS_LOG_FILE, BACKUP_KRX_FILE = "analysis_log_v5.json", "backup_krx.json"
 
+# 세션 상태 및 영속 데이터 복구 로직
 if "scan_storage" not in st.session_state:
     if os.path.exists(SCAN_RESULT_FILE):
         try:
@@ -46,6 +47,7 @@ def get_krx_list_ultimate():
                 return df_l
         except: pass
     try:
+        # 경량화: 코드와 이름만 추출
         df = fdr.StockListing('KRX')[['Code', 'Name']]
         df['Code'] = df['Code'].astype(str).str.zfill(6)
         df.to_json(BACKUP_KRX_FILE)
@@ -58,6 +60,7 @@ def get_krx_list_ultimate():
 def analyze_v5_engine(ticker, target_date):
     df = None
     ticker_str = str(ticker).zfill(6)
+    # 데이터 다이어트: 패턴 분석용 240일(영업일 160일) 범위
     start_date = target_date - datetime.timedelta(days=240) 
     try:
         df = fdr.DataReader(ticker_str, start_date, target_date)
@@ -78,6 +81,7 @@ def analyze_v5_engine(ticker, target_date):
 
     if df is None or df.empty: return None, None
     
+    # 핵심 전투 로직 (손절 -3/-5, 비중 20/30/50 유지)
     df['BODY_RATIO'] = (df['CLOSE'] - df['OPEN']).abs() / (df['HIGH'] - df['LOW'] + 0.001)
     df['VOL_MA'] = df['VOLUME'].rolling(20).mean()
     curr = df.iloc[-1]
@@ -108,11 +112,11 @@ def analyze_v5_engine(ticker, target_date):
     }, df
 
 # --- [3. UI 레이아웃] ---
-st.set_page_config(page_title="🔥 Phoenix Hybrid v5.9.69", layout="wide")
+st.set_page_config(page_title="🔥 Phoenix Hybrid v5.9.70", layout="wide")
 
 c_head1, c_head2 = st.columns([6, 2])
 with c_head1:
-    st.markdown(f"### 🔥 Phoenix Hybrid v5.9.69 | `{st.session_state.server_status}`")
+    st.markdown(f"### 🔥 Phoenix Hybrid v5.9.70 | `{st.session_state.server_status}`")
 with c_head2:
     if st.button("🔄 리스트 강제 동기화", use_container_width=True):
         if os.path.exists(BACKUP_KRX_FILE): os.remove(BACKUP_KRX_FILE)
@@ -148,7 +152,7 @@ if btn_click or (st.session_state.auto_code != ""):
         st.session_state.auto_code = ""
         st.markdown(f"### 🎯 [{disp_name}] 전략 리포트")
         fig = go.Figure(data=[go.Candlestick(x=df.index.strftime('%y-%m-%d'), open=df['OPEN'], high=df['HIGH'], low=df['LOW'], close=df['CLOSE'], increasing_line_color='red', decreasing_line_color='blue')])
-        fig.add_hline(y=res['목표가'], line_dash="dot", line_color="orange", annotation_text=f"목표가")
+        fig.add_hline(y=res['목표가'], line_dash="dot", line_color="orange", annotation_text="목표가")
         fig.add_hline(y=res['손절가(-5%)'], line_dash="solid", line_color="red", line_width=2, annotation_text="손절선")
         fig.update_layout(height=450, xaxis_rangeslider_visible=False, template="plotly_dark")
         st.plotly_chart(fig, use_container_width=True)
@@ -156,16 +160,17 @@ if btn_click or (st.session_state.auto_code != ""):
 
 st.divider()
 
-# --- [4. 최적화된 스캐너 섹션] ---
+# --- [4. 광역 스캐너 섹션 (1,000개 확장 및 정렬)] ---
 col_scan1, col_scan2 = st.columns([6, 2])
 with col_scan1:
-    scan_btn = st.button("🚀 500개 종목 정밀 스캔 시작 (영속 저장)", width='stretch')
+    scan_btn = st.button("🚀 1,000개 종목 광역 정밀 스캔 (예상수익 순 정렬)", width='stretch')
 with col_scan2:
     if st.button("📂 이전 결과 불러오기"): st.rerun()
 
 if scan_btn:
     st.session_state.scan_storage = []
-    codes = krx_df.head(500)
+    target_count = 1000
+    codes = krx_df.head(target_count)
     prog_bar = st.progress(0)
     status_text = st.empty()
     time_text = st.empty()
@@ -175,24 +180,29 @@ if scan_btn:
         curr_code, curr_name = row['Code'], row['Name']
         elapsed = time.time() - start_time
         avg_time = elapsed / (i + 1)
-        rem_time = avg_time * (500 - (i + 1))
+        rem_time = avg_time * (target_count - (i + 1))
         
-        status_text.markdown(f"**분석 중:** `{curr_code}` ({curr_name}) | **진행:** `{i+1}/500`")
-        time_text.markdown(f"⏱️ **예상 남은 시간:** `{int(rem_time)}초` (평균 {avg_time:.2f}초/건)")
+        status_text.markdown(f"**광역 탐지 중:** `{curr_code}` ({curr_name}) | **진행:** `{i+1}/{target_count}`")
+        time_text.markdown(f"⏱️ **남은 시간:** `{int(rem_time//60)}분 {int(rem_time%60)}초` (평균 {avg_time:.2f}초/건)")
         
         r, _ = analyze_v5_engine(curr_code, datetime.date.today())
         if r and r['is_valid']:
             r['종목명'] = curr_name
             st.session_state.scan_storage.append(r)
-        prog_bar.progress((i + 1) / 500)
+        prog_bar.progress((i + 1) / target_count)
     
     save_data(SCAN_RESULT_FILE, st.session_state.scan_storage)
-    status_text.success(f"✅ 스캔 완료! 총 {len(st.session_state.scan_storage)}개 종목 발굴")
+    status_text.success(f"✅ 광역 스캔 완료! {len(st.session_state.scan_storage)}개 종목 포착")
     time_text.empty()
     st.rerun()
 
 if st.session_state.scan_storage:
-    st.markdown("### 📋 스캔 결과 리스트 (매수 정보 포함)")
+    st.markdown("### 📋 스캔 결과 리스트 (예상수익 높은 순)")
     scan_df = pd.DataFrame(st.session_state.scan_storage)
+    
+    # 예상수익 기반 정렬 로직 (v5.9.70 핵심 오더)
+    scan_df['sort_val'] = scan_df['예상수익'].str.replace('%', '').astype(float)
+    scan_df = scan_df.sort_values(by='sort_val', ascending=False).drop(columns=['sort_val'])
+    
     cols = ['종목명', '종목코드', '상태', '비중', '현재가', '목표가', '손절가(-5%)', '예상수익', '유사도', '거래량비']
-    st.dataframe(scan_df[cols].sort_values(by='유사도', ascending=False), use_container_width=True)
+    st.dataframe(scan_df[cols], use_container_width=True)
