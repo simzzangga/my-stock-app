@@ -9,14 +9,14 @@ import os
 import plotly.graph_objects as go
 import time
 
-# --- [1. 초경량 시스템 설정 및 함수 복구] ---
+# --- [1. 초경량 시스템 설정 및 함수] ---
 if "scan_storage" not in st.session_state: st.session_state.scan_storage = []
 if "auto_code" not in st.session_state: st.session_state.auto_code = ""
+# 초기 상태는 '엔진 예열 중'
 if "server_status" not in st.session_state: st.session_state.server_status = "🛰️ 엔진 예열 중"
 
 ANALYSIS_LOG_FILE, BACKUP_KRX_FILE = "analysis_log_v5.json", "backup_krx.json"
 
-# [복구 완료] 로그 저장/로드 함수
 def load_data(file_path, default_val):
     try:
         if os.path.exists(file_path):
@@ -35,19 +35,21 @@ def get_krx_list_ultimate():
         try:
             df_l = pd.read_json(BACKUP_KRX_FILE)
             if not df_l.empty:
-                st.session_state.server_status = "⚡ 초고속 로컬 모드 가동"
+                # [수정 완료] 로컬 데이터 로딩 시 배너 변경
+                st.session_state.server_status = "🔥 출격 준비 완료 (백업 모드)"
                 return df_l
         except: pass
     try:
         df = fdr.StockListing('KRX')[['Code', 'Name']]
         df['Code'] = df['Code'].astype(str).str.zfill(6)
         df.to_json(BACKUP_KRX_FILE)
-        st.session_state.server_status = "📡 KRX 서버 동기화 완료"
+        # [수정 완료] 서버 동기화 완료 시 배너 변경
+        st.session_state.server_status = "🔥 출격 준비 완료 (시스템 정상)"
         return df
     except:
         return pd.DataFrame([{"Code": "005930", "Name": "삼성전자"}])
 
-# --- [2. 엔진: 데이터 범위 최적화 (v5.9.68)] ---
+# --- [2. 엔진: v5.9.66 무결성 로직 동일 유지] ---
 def analyze_v5_engine(ticker, target_date):
     df = None
     ticker_str = str(ticker).zfill(6)
@@ -72,7 +74,6 @@ def analyze_v5_engine(ticker, target_date):
 
     if df is None or df.empty: return None, None
     
-    # [v5.9.66 무결성 로직 동일 유지]
     df['BODY_RATIO'] = (df['CLOSE'] - df['OPEN']).abs() / (df['HIGH'] - df['LOW'] + 0.001)
     df['VOL_MA'] = df['VOLUME'].rolling(20).mean()
     curr = df.iloc[-1]
@@ -104,7 +105,7 @@ def analyze_v5_engine(ticker, target_date):
         "integrity": integrity, "is_valid": True if weight_now > 0 else False
     }, df
 
-# --- [3. UI 레이아웃 및 제어 센터] ---
+# --- [3. UI 레이아웃] ---
 st.set_page_config(page_title="🔥 Phoenix Hybrid v5.9.68", layout="wide")
 
 c_head1, c_head2 = st.columns([6, 2])
