@@ -48,7 +48,7 @@ st.set_page_config(page_title="🔥 Phoenix Hybrid v5.9.47", layout="wide")
 
 # 멋진 로고와 메인 타이틀 (비밀번호 없이 즉시 노출)
 st.markdown("<h1 style='text-align: center; color: #FF4B4B;'>🔥 Phoenix Hybrid v5.9.47</h1>", unsafe_allow_html=True)
-st.markdown("<p style='text-align: center; color: #888;'>Premium Genomic-based Stock Analysis System for PM SHIM</p>", unsafe_allow_html=True)
+st.markdown("<p style='text-align: center; color: #888;'>Premium Stock Analysis System for SHIM SEUNGHYUN</p>", unsafe_allow_html=True)
 
 krx_df = get_krx_list_ultimate()
 krx_df['Display'] = krx_df['Code'].astype(str) + " | " + krx_df['Name'].astype(str)
