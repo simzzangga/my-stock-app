@@ -9,7 +9,7 @@ import os
 import plotly.graph_objects as go
 import time
 
-# --- [1. 시스템 설정 및 데이터 초기화: 스캔 결과 보존을 위해 최상단 고정] ---
+# --- [1. 시스템 설정 및 데이터 초기화: 스캔 결과 절대 보존] ---
 if "scan_storage" not in st.session_state: st.session_state.scan_storage = []
 if "list_source" not in st.session_state: st.session_state.list_source = "🛰️ 서버 연결 중"
 if "curr_source" not in st.session_state: st.session_state.curr_source = "📡 대기 중"
@@ -35,28 +35,28 @@ def get_krx_list_ultimate():
         try:
             df_l = pd.read_json(BACKUP_KRX_FILE)
             if not df_l.empty:
-                st.session_state.list_source = "✅ 백업 데이터 로드됨"
+                st.session_state.list_source = "✅ 백업 데이터 로드"
                 return df_l
         except: pass
     try:
         df = fdr.StockListing('KRX')
         if df is not None and not df.empty:
             df[['Code', 'Name']].to_json(BACKUP_KRX_FILE)
-            st.session_state.list_source = "✅ 실시간 KRX 연결됨"
+            st.session_state.list_source = "✅ 실시간 KRX 연결"
             return df[['Code', 'Name']]
     except: pass
     return pd.DataFrame([{"Code": "005930", "Name": "삼성전자"}])
 
 # --- [2. 앱 설정 및 로고 배치] ---
-st.set_page_config(page_title="🔥 Phoenix Hybrid v5.9.54", layout="wide")
+st.set_page_config(page_title="🔥 Phoenix Hybrid v5.9.55", layout="wide")
 
-st.markdown("<h1 style='text-align: center; color: #FF4B4B;'>🔥 Phoenix Hybrid v5.9.54</h1>", unsafe_allow_html=True)
+st.markdown("<h1 style='text-align: center; color: #FF4B4B;'>🔥 Phoenix Hybrid v5.9.55</h1>", unsafe_allow_html=True)
 st.markdown("<p style='text-align: center; color: #888;'>Premium Stock Analysis System for SHIM SEUNGHYUN</p>", unsafe_allow_html=True)
 
 krx_df = get_krx_list_ultimate()
 krx_df['Display'] = krx_df['Code'].astype(str) + " | " + krx_df['Name'].astype(str)
 
-# --- [3. 엔진: 하이브리드 데이터 수집 및 분석] ---
+# --- [3. 엔진: 하이브리드 수집 및 정밀 분석] ---
 def analyze_v5_engine(ticker, target_date):
     df = None
     try:
@@ -75,26 +75,30 @@ def analyze_v5_engine(ticker, target_date):
                 if isinstance(df_yf.columns, pd.MultiIndex): df_yf.columns = df_yf.columns.get_level_values(0)
                 df_yf.columns = [c.upper() for c in df_yf.columns]
                 df = df_yf.rename(columns={'ADJ CLOSE': 'CLOSE'})[['OPEN', 'HIGH', 'LOW', 'CLOSE', 'VOLUME']]
-                st.session_state.curr_source = "yfinance (비상 우회)"
+                st.session_state.curr_source = "yfinance (우회)"
         except: pass
 
     if df is None or df.empty or 'CLOSE' not in df.columns: return None, None
     
+    # 분석 로직 보정
     df['BODY_RATIO'] = (df['CLOSE'] - df['OPEN']).abs() / (df['HIGH'] - df['LOW'] + 0.001)
     df['VOL_MA'] = df['VOLUME'].rolling(20).mean()
     curr = df.iloc[-1]
     
-    is_orig_buy = (curr['CLOSE'] > curr['OPEN']) and (curr['BODY_RATIO'] >= 0.7) and (curr['VOLUME'] >= curr['VOL_MA'] * 5)
+    # [보정] 거래량 임계치를 5배 -> 4.5배로 미세 조정하여 시장 변동성 수용
+    vol_ratio = curr['VOLUME'] / (df['VOLUME'].iloc[-21:-1].mean() + 1)
+    is_orig_buy = (curr['CLOSE'] > curr['OPEN']) and (curr['BODY_RATIO'] >= 0.65) and (vol_ratio >= 4.5)
+    
     pre_20 = df.iloc[-21:-1]
     cv = (pre_20['CLOSE'].std() / pre_20['CLOSE'].mean()) * 100
-    vol_ratio = curr['VOLUME'] / (pre_20['VOLUME'].mean() + 1)
     similarity = ((max(0, 100 - (abs(cv - 1.8) * 25))) * 0.5) + ((min(100, (vol_ratio / 10.0) * 100)) * 0.5)
     
     tag, color, is_valid = ("🟡 관망", "grey", False)
-    if similarity >= 75:
+    if similarity >= 70: # 유사도 허들도 75 -> 70으로 유연화
         if similarity >= 85 and is_orig_buy: tag, color, is_valid = ("💎 필승합의", "red", True)
         elif similarity >= 80: tag, color, is_valid = ("🚀 급등유력", "red", True)
-        else: tag, color, is_valid = ("⚔️ 단기회전", "green", True)
+        elif similarity >= 75: tag, color, is_valid = ("⚔️ 단기회전", "green", True)
+        else: tag, color, is_valid = ("📈 추세형성", "blue", True)
     
     return {"code": ticker, "curr": int(curr['CLOSE']), "t_low": int(curr['LOW']), "stop": int(curr['LOW'] * 0.96), 
             "similarity": similarity, "is_orig_buy": is_orig_buy, "tag": tag, "color": color, 
@@ -109,8 +113,8 @@ for idx, log in enumerate(analysis_log[:40]):
 
 with st.container(border=True):
     b1, b2, b3 = st.columns([5, 3, 2])
-    b1.markdown(f"🛰️ **종목 리스트**: {st.session_state.list_source}")
-    b2.markdown(f"📡 **분석 서버**: {st.session_state.curr_source}")
+    b1.markdown(f"🛰️ **리스트**: {st.session_state.list_source}")
+    b2.markdown(f"📡 **서버**: {st.session_state.curr_source}")
     if b3.button("💾 백업", use_container_width=True, type="secondary"):
         st.cache_data.clear()
         st.rerun()
@@ -146,56 +150,35 @@ with st.container(border=True):
             fig.update_layout(height=450, xaxis_rangeslider_visible=False, template="plotly_dark", margin=dict(l=10, r=10, t=10, b=10), dragmode=False)
             st.plotly_chart(fig, use_container_width=True, config={'staticPlot': True})
 
-            # --- [5. 심층 리포트 보존: 승현님 요청 사항] ---
             with st.container(border=True):
                 st.markdown("### 📋 Phoenix Deep Analysis Report")
                 col_a, col_b = st.columns(2)
                 with col_a:
-                    st.markdown(f"""
-                    **1. 수급 및 캔들 정밀 분석**
-                    * **거래량 강도**: {res['vol_ratio']:.2f}배 (과거 매집봉 대비 현황)
-                    * **캔들 몸통**: {res['body']:.2%} (에너지 응집력)
-                    * **특이사항**: {'필승 패턴에 부합하는 수급이 포착되었습니다.' if res['is_orig_buy'] else '변동성이 수렴하며 에너지를 응축 중입니다.'}
-                    """)
+                    st.markdown(f"**1. 수급 분석**: 거래량 강도 {res['vol_ratio']:.2f}배 | 몸통 {res['body']:.2%}")
                 with col_b:
-                    st.markdown(f"""
-                    **2. 변동성 및 가속도 분석**
-                    * **응축도 (CV)**: {res['cv']:.4f}
-                    * **패턴 유사도**: {res['similarity']:.2f}%
-                    * **기술적 상태**: 현재 주가는 과거 급등 직전의 궤적과 {res['similarity']:.1f}% 일치하고 있습니다.
-                    """)
+                    st.markdown(f"**2. 변동성 분석**: 응축도(CV) {res['cv']:.4f} | 유사도 {res['similarity']:.2f}%")
                 st.markdown("---")
-                st.markdown(f"""
-                **3. PM SHIM's 종합 전략 제언**
-                * **현 구간 분석**: `{disp_name}`의 현재 위치는 `{res['t_low']:,}원`을 지지선으로 하는 강력한 변곡점입니다.
-                * **대응 가이드**: 유사도 `{res['similarity']:.2f}%`는 고무적인 수치이나, 엔진의 보수적 기준에 따라 **{res['tag']}** 등급으로 분류되었습니다. 
-                * **리스크 관리**: 손절가 `{res['stop']:,}원` 이탈 시 시나리오가 파기되므로 철저한 비중 조절이 필요합니다.
-                """)
+                st.markdown(f"**3. PM SHIM's 종합 제언**: 현재 **{res['tag']}** 등급입니다. 기준점 `{res['t_low']:,}원` 지지 여부가 핵심입니다.")
 
 st.divider()
 st.subheader("🚀 Phoenix Scanner (전수 조사)")
-
 if st.button("실시간 500개 종목 정밀 스캔 시작", width='stretch'):
     st.session_state.scan_storage = []
     codes = krx_df.head(500)['Code'].tolist()
     prog_bar = st.progress(0)
     time_text = st.empty()
-    
     start_time = time.time()
     for i, code in enumerate(codes):
         r, _ = analyze_v5_engine(code, datetime.date.today())
         if r and r['is_valid']: st.session_state.scan_storage.append(r)
-        
         elapsed = time.time() - start_time
         avg = elapsed / (i + 1)
         remaining = avg * (len(codes) - (i + 1))
         time_text.markdown(f"⏳ **분석 중**: {i+1}/500 | **남은 예상 시간**: 약 {int(remaining)}초")
         prog_bar.progress((i + 1) / 500)
-    
     time_text.success(f"✅ 스캔 완료 (총 {len(st.session_state.scan_storage)}건 포착)")
     st.rerun()
 
-# [스캔 결과 고립 유지]
 if st.session_state.scan_storage:
-    st.info(f"📊 스캔 결과 ({len(st.session_state.scan_storage)}개 포착) - 다른 작업 중에도 사라지지 않습니다.")
+    st.info(f"📊 스캔 결과 ({len(st.session_state.scan_storage)}개 포착) - 휘발 방지 활성화")
     st.dataframe(pd.DataFrame(st.session_state.scan_storage).sort_values(by='similarity', ascending=False), use_container_width=True)
