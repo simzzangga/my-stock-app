@@ -9,49 +9,45 @@ import os
 import plotly.graph_objects as go
 import time
 
-# --- [1. 시스템 설정 및 서버 상태 초기화] ---
+# --- [1. 초경량 시스템 설정] ---
 if "scan_storage" not in st.session_state: st.session_state.scan_storage = []
 if "auto_code" not in st.session_state: st.session_state.auto_code = ""
-if "server_status" not in st.session_state: st.session_state.server_status = "🛰️ 서버 연결 대기 중"
+if "server_status" not in st.session_state: st.session_state.server_status = "🛰️ 엔진 예열 중"
 
 ANALYSIS_LOG_FILE, BACKUP_KRX_FILE = "analysis_log_v5.json", "backup_krx.json"
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=3600) # 1시간 동안 리스트 고정 (속도 최우선)
 def get_krx_list_ultimate():
-    try:
-        df = fdr.StockListing('KRX')
-        if df is not None and not df.empty:
-            df['Code'] = df['Code'].astype(str).str.zfill(6)
-            df = df[['Code', 'Name']]
-            df.to_json(BACKUP_KRX_FILE)
-            st.session_state.server_status = "📡 KRX 정식 서버 연결 성공"
-            return df
-    except:
-        if os.path.exists(BACKUP_KRX_FILE):
+    # 백업이 있으면 서버 호출 없이 즉시 로드 (0.1초)
+    if os.path.exists(BACKUP_KRX_FILE):
+        try:
             df_l = pd.read_json(BACKUP_KRX_FILE)
-            df_l['Code'] = df_l['Code'].astype(str).str.zfill(6)
-            st.session_state.server_status = "⚠️ 백업 데이터 가동 중"
-            return df_l
-    return pd.DataFrame([{"Code": "005930", "Name": "삼성전자"}])
-
-def load_data(file_path, default_val):
+            if not df_l.empty:
+                st.session_state.server_status = "⚡ 초고속 로컬 모드 가동"
+                return df_l
+        except: pass
+    
     try:
-        if os.path.exists(file_path):
-            with open(file_path, "r", encoding="utf-8") as f: return json.load(f)
-    except: pass
-    return default_val
+        # 서버 호출 시에도 필요한 컬럼(코드, 이름)만 추출하여 경량화
+        df = fdr.StockListing('KRX')[['Code', 'Name']]
+        df['Code'] = df['Code'].astype(str).str.zfill(6)
+        df.to_json(BACKUP_KRX_FILE)
+        st.session_state.server_status = "📡 KRX 서버 동기화 완료"
+        return df
+    except:
+        return pd.DataFrame([{"Code": "005930", "Name": "삼성전자"}])
 
-def save_data(file_path, data):
-    try:
-        with open(file_path, "w", encoding="utf-8") as f: json.dump(data, f, ensure_ascii=False, indent=4)
-    except: pass
-
-# --- [2. 엔진: v5.9.66 로직 유지 (데이터 호출부 강화)] ---
+# --- [2. 엔진: 데이터 범위 최적화 (v5.9.68)] ---
 def analyze_v5_engine(ticker, target_date):
     df = None
     ticker_str = str(ticker).zfill(6)
+    
+    # [지휘관 오더 반영] 분석에 최적화된 범위(약 160일~최대 5년)만 정밀 타격
+    # 기본 분석 범위는 패턴 인식을 위해 160거래일(약 8개월)로 설정
+    start_date = target_date - datetime.timedelta(days=240) 
+    
     try:
-        df = fdr.DataReader(ticker_str, target_date - datetime.timedelta(days=160), target_date)
+        df = fdr.DataReader(ticker_str, start_date, target_date)
         if df is not None and not df.empty:
             df.columns = [c.upper() for c in df.columns]
             df = df.rename(columns={'시가':'OPEN','고가':'HIGH','저가':'LOW','종가':'CLOSE','거래량':'VOLUME'})
@@ -60,7 +56,7 @@ def analyze_v5_engine(ticker, target_date):
     if df is None or df.empty:
         try:
             yf_ticker = f"{ticker_str}.KS" if ticker_str.startswith(('0', '1')) else f"{ticker_str}.KQ"
-            df_yf = yf.download(yf_ticker, start=target_date - datetime.timedelta(days=210), end=target_date + datetime.timedelta(days=1), progress=False)
+            df_yf = yf.download(yf_ticker, start=start_date, end=target_date + datetime.timedelta(days=1), progress=False)
             if not df_yf.empty:
                 if isinstance(df_yf.columns, pd.MultiIndex): df_yf.columns = df_yf.columns.get_level_values(0)
                 df_yf.columns = [c.upper() for c in df_yf.columns]
@@ -69,7 +65,7 @@ def analyze_v5_engine(ticker, target_date):
 
     if df is None or df.empty: return None, None
     
-    # [승현님 로직 100% 보존]
+    # [v5.9.66 무결성 로직 동일 유지]
     df['BODY_RATIO'] = (df['CLOSE'] - df['OPEN']).abs() / (df['HIGH'] - df['LOW'] + 0.001)
     df['VOL_MA'] = df['VOLUME'].rolling(20).mean()
     curr = df.iloc[-1]
@@ -101,22 +97,24 @@ def analyze_v5_engine(ticker, target_date):
         "integrity": integrity, "is_valid": True if weight_now > 0 else False
     }, df
 
-# --- [3. UI 레이아웃] ---
-st.set_page_config(page_title="🔥 Phoenix Hybrid v5.9.67", layout="wide")
+# --- [3. UI 레이아웃 및 제어 센터] ---
+st.set_page_config(page_title="🔥 Phoenix Hybrid v5.9.68", layout="wide")
 
 c_head1, c_head2 = st.columns([6, 2])
 with c_head1:
-    st.markdown(f"### 🔥 Phoenix Hybrid v5.9.67 | `{st.session_state.server_status}`")
+    st.markdown(f"### 🔥 Phoenix Hybrid v5.9.68 | `{st.session_state.server_status}`")
 with c_head2:
-    if st.button("🔄 리스트 강제 갱신", use_container_width=True):
+    if st.button("🔄 리스트 강제 동기화", use_container_width=True):
+        if os.path.exists(BACKUP_KRX_FILE): os.remove(BACKUP_KRX_FILE)
         st.cache_data.clear(); st.rerun()
 
 krx_df = get_krx_list_ultimate()
 krx_df['Display'] = krx_df['Code'] + " | " + krx_df['Name']
 
+# [최적화] 사이드바 로그 로드 속도 향상
 st.sidebar.title("📁 Phoenix History")
 analysis_log = load_data(ANALYSIS_LOG_FILE, [])
-for idx, log in enumerate(analysis_log[:40]):
+for idx, log in enumerate(analysis_log[:20]): # 20개만 표시하여 로딩 속도 확보
     if st.sidebar.button(f"{log['name']} ({log['code']})", key=f"side_{idx}", width='stretch'):
         st.session_state.auto_code = log['code']; st.rerun()
 
@@ -126,10 +124,9 @@ with st.form("main_analysis_form", clear_on_submit=False):
     if st.session_state.auto_code:
         matches = [i for i, x in enumerate(krx_df['Code']) if x == str(st.session_state.auto_code).zfill(6)]
         if matches: def_idx = matches[0]
-
     search_input = c1.selectbox("종목 선택", krx_df['Display'].tolist(), index=def_idx)
     c2.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
-    btn_click = c2.form_submit_button("🔍 분석 시작", type="primary", use_container_width=True)
+    btn_click = c2.form_submit_button("🔍 초고속 분석", type="primary", use_container_width=True)
     d_input = c3.date_input("날짜 지정", value=datetime.date.today())
 
 if btn_click or (st.session_state.auto_code != ""):
@@ -144,7 +141,6 @@ if btn_click or (st.session_state.auto_code != ""):
         st.markdown(f"### 🎯 [{disp_name}] 전략 리포트")
         fig = go.Figure(data=[go.Candlestick(x=df.index.strftime('%y-%m-%d'), open=df['OPEN'], high=df['HIGH'], low=df['LOW'], close=df['CLOSE'], increasing_line_color='red', decreasing_line_color='blue')])
         fig.add_hline(y=res['target_price'], line_dash="dot", line_color="orange", annotation_text=f"타겟({res['exp_profit']}%)")
-        fig.add_hline(y=res['stop_warning'], line_dash="dot", line_color="yellow", annotation_text="경고(-3%)")
         fig.add_hline(y=res['stop_final'], line_dash="solid", line_color="red", line_width=2, annotation_text="손절(-5%)")
         fig.update_layout(height=450, xaxis_rangeslider_visible=False, template="plotly_dark")
         st.plotly_chart(fig, use_container_width=True)
@@ -155,7 +151,7 @@ if btn_click or (st.session_state.auto_code != ""):
             with col2: st.markdown(f"**[수익/손절]** 목표 `{res['target_price']:,}원` / 손절 `{res['stop_final']:,}원`")
 
 st.divider()
-if st.button("🚀 500개 종목 정밀 스캔 시작", width='stretch'):
+if st.button("🚀 500개 종목 초정밀 스캔", width='stretch'):
     st.session_state.scan_storage = []
     codes = krx_df.head(500)['Code'].tolist()
     prog_bar = st.progress(0)
