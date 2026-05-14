@@ -208,4 +208,3 @@ if st.session_state.scan_storage:
     cols = ['종목명', '종목코드', '상태', '비중', '현재가', '목표가', '손절가', '예상수익', '유사도', '거래량비']
     # [수정] hide_index=True를 통해 불필요한 행 번호(숫자)를 숨김
     st.dataframe(scan_df[cols], use_container_width=True, hide_index=True)
-"""
